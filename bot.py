@@ -1,11 +1,21 @@
 #!/usr/bin/env python3
 """
-AI CODE ARMY — Рой из 7 ИИ-агентов
+🤖 AI CODE ARMY v2.0
+Рой из 8 ИИ-агентов
 Создаёт реальные проекты: сайты, ботов, API
 С памятью, поиском, файлами, деплоем
+Улучшенная визуализация и интерактивность
 """
 
-import os, logging, time, json, requests, zipfile, io, re
+import os
+import logging
+import time
+import json
+import requests
+import zipfile
+import io
+import re
+import random
 from datetime import datetime, date, timedelta
 from typing import Dict, List, Optional, Tuple
 import telebot
@@ -18,71 +28,169 @@ import google.generativeai as genai
 
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
-CARD_NUMBER = os.environ.get("CARD_NUMBER", "XXXX")
+CARD_NUMBER = os.environ.get("CARD_NUMBER", "XXXX XXXX XXXX XXXX")
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 SERPER_API_KEY = os.environ.get("SERPER_API_KEY", "")
 
+# Админы (безлимит + полный контроль)
 ADMINS = {"MAON1K"}
+
+# Premium пользователи
 PREMIUM_USERS = set()
 if os.environ.get("PREMIUM_USERS"):
     PREMIUM_USERS = set(map(int, os.environ["PREMIUM_USERS"].split(",")))
 
-FREE_DAILY_LIMIT = 20
+# Лимиты
+FREE_DAILY_LIMIT = 25  # Увеличил!
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# Версия бота
+BOT_VERSION = "2.0"
+
+# ============================================================================
+# LOGGING
+# ============================================================================
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
+
+# ============================================================================
+# INITIALIZATION
+# ============================================================================
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 genai.configure(api_key=GEMINI_API_KEY)
 
-# Хранилища
+# ============================================================================
+# ХРАНИЛИЩА
+# ============================================================================
+
 user_data: Dict[int, dict] = {}
 user_usage: Dict[int, dict] = {}
-conversations: Dict[int, List[dict]] = {}  # ПАМЯТЬ
+conversations: Dict[int, List[dict]] = {}  # ПАМЯТЬ РАЗГОВОРОВ
 project_mode: Dict[int, dict] = {}  # Активные проекты
 file_cache: Dict[int, dict] = {}  # Загруженные файлы
+user_settings: Dict[int, dict] = {}  # Настройки пользователей
+
+# Статистика
 stats = {
-    "total": 0,
-    "success": 0,
+    "total_requests": 0,
+    "successful": 0,
     "errors": 0,
-    "users": 0,
-    "projects": 0,
-    "deployed": 0
+    "users_total": 0,
+    "projects_created": 0,
+    "messages_today": 0,
+    "started_at": datetime.now()
 }
 
 # ============================================================================
-# AI AGENTS — 7 СПЕЦИАЛИСТОВ
+# МОТИВАЦИОННЫЕ ФРАЗЫ И ЭМОДЗИ
+# ============================================================================
+
+THINKING_PHRASES = [
+    "🧠 Думаю над этим...",
+    "⚡ Обрабатываю запрос...",
+    "🔮 Анализирую...",
+    "💭 Размышляю...",
+    "🎯 Работаю над решением...",
+    "✨ Генерирую магию...",
+    "🚀 Запускаю нейросети...",
+    "🔥 Включаю турбо-режим...",
+]
+
+SUCCESS_PHRASES = [
+    "✅ Готово!",
+    "🎉 Выполнено!",
+    "💪 Сделано!",
+    "🏆 Успех!",
+    "⭐ Отлично получилось!",
+    "🔥 Вот результат!",
+]
+
+WELCOME_TIPS = [
+    "💡 Совет: Чем подробнее опишешь задачу — тем лучше результат!",
+    "💡 Совет: Я помню весь наш разговор. Можешь писать 'доработай' или 'исправь'.",
+    "💡 Совет: Отправь файл с кодом — я проанализирую его!",
+    "💡 Совет: Попробуй 'Создать проект' — команда из 8 агентов сделает всё!",
+    "💡 Совет: Спроси курс биткоина или поищи информацию в интернете!",
+]
+
+PROGRESS_EMOJIS = ["⬜", "🟦", "🟩", "🟨", "🟧", "🟥", "🟪", "⬛"]
+
+# ============================================================================
+# AI МОДЕЛИ (АКТУАЛЬНЫЕ!)
+# ============================================================================
+
+# Список моделей для попытки (от лучшей к базовой)
+GEMINI_MODELS = [
+    "gemini-1.5-pro-latest",      # Самая умная стабильная
+    "gemini-1.5-flash-latest",    # Быстрая стабильная
+    "gemini-1.5-pro",             # Fallback
+    "gemini-1.5-flash",           # Fallback быстрая
+]
+
+def call_gemini(prompt: str, system: str = "", max_tokens: int = 8000) -> str:
+    """Универсальный вызов Gemini с автофолбэком"""
+    
+    full_prompt = f"{system}\n\n{prompt}" if system else prompt
+    last_error = None
+    
+    for model_name in GEMINI_MODELS:
+        try:
+            model = genai.GenerativeModel(model_name=model_name)
+            response = model.generate_content(
+                full_prompt,
+                generation_config=genai.GenerationConfig(
+                    temperature=0.8,
+                    max_output_tokens=max_tokens
+                )
+            )
+            logger.info(f"✅ Model {model_name} succeeded")
+            return response.text
+        except Exception as e:
+            last_error = e
+            logger.warning(f"⚠️ Model {model_name} failed: {str(e)[:100]}")
+            continue
+    
+    raise Exception(f"All Gemini models failed. Last error: {last_error}")
+
+# ============================================================================
+# 8 AI АГЕНТОВ
 # ============================================================================
 
 AGENTS = {
     "architect": {
         "name": "🧠 Архитектор",
         "emoji": "🧠",
+        "color": "🔵",
         "role": """Ты — Lead Software Architect с 15+ годами опыта.
 
-ОБЯЗАННОСТИ:
+ТВОЯ РАБОТА:
 - Анализ требований клиента
 - Проектирование архитектуры (микросервисы, монолит, serverless)
-- Выбор технологий и фреймворков
+- Выбор оптимальных технологий
 - Создание структуры проекта
 - Техническое задание для команды
 
 ТЕХНОЛОГИИ:
 - Backend: Python (Flask/FastAPI/Django), Node.js (Express/Nest), Go
-- Frontend: React, Vue, Svelte, Next.js, HTML/CSS
+- Frontend: React, Vue, Svelte, Next.js, HTML/CSS/JS
 - БД: PostgreSQL, MongoDB, Redis, SQLite
-- Деплой: Vercel, Railway, Netlify, AWS, Heroku
+- Деплой: Vercel, Railway, Netlify, Fly.io
 
 ФОРМАТ ОТВЕТА:
-**Проект:** [название]
-**Тип:** [веб-приложение/бот/API/лендинг]
-**Стек:**
+📋 **ПРОЕКТ:** [название]
+🎯 **ТИП:** [веб-приложение/бот/API/лендинг]
+
+🛠 **ТЕХНОЛОГИИ:**
 - Backend: [технология]
 - Frontend: [технология]
 - БД: [технология]
 - Хостинг: [платформа]
 
-**Структура файлов:**
+📁 **СТРУКТУРА:**
 проект/
 ├── backend/
 │ ├── app.py
@@ -94,288 +202,252 @@ AGENTS = {
 │ └── script.js
 └── README.md
 
-**План для команды:**
-1. Backend Dev: создать API endpoints
-2. Frontend Dev: сверстать UI
-3. Bot Dev: интегрировать Telegram (если нужно)
-4. Security: проверить уязвимости
-5. DevOps: подготовить деплой
+📝 **ЗАДАНИЯ ДЛЯ КОМАНДЫ:**
+1. Backend Dev: [задача]
+2. Frontend Dev: [задача]
+3. Bot Dev: [если нужен бот]
+4. Security: [что проверить]
+5. DevOps: [как деплоить]
 
-Будь конкретным и профессиональным."""
+Будь конкретным и профессиональным!"""
     },
     
     "backend": {
         "name": "💻 Backend Developer",
         "emoji": "💻",
+        "color": "🟢",
         "role": """Ты — Senior Backend Developer (Python/Node.js).
 
-ОБЯЗАННОСТИ:
+ТВОЯ РАБОТА:
 - Разработка серверной логики
 - REST/GraphQL API
-- Работа с БД (SQL/NoSQL)
-- Аутентификация и авторизация
-- Обработка файлов, сессий
-- WebSockets (если нужно)
+- Работа с БД
+- Аутентификация
+- WebSockets
 
 СТЕК:
 - Python: Flask, FastAPI, Django, SQLAlchemy
 - Node.js: Express, Nest.js, Prisma
-- БД: PostgreSQL, MongoDB, Redis
-- ORM/ODM: SQLAlchemy, Mongoose, Prisma
+- БД: PostgreSQL, MongoDB, Redis, SQLite
 
 ТРЕБОВАНИЯ К КОДУ:
-- Clean code с комментариями
-- Обработка ВСЕХ ошибок (try/except)
-- Валидация входных данных
-- Логирование
-- ENV переменные для секретов
-- Type hints (Python) / TypeScript
-- Документация API
+✅ Clean code с комментариями
+✅ Обработка ВСЕХ ошибок
+✅ Валидация входных данных
+✅ Логирование
+✅ ENV переменные для секретов
+✅ Type hints
+✅ Документация API
 
-Пиши production-ready код."""
+Пиши ПОЛНЫЙ production-ready код!"""
     },
     
     "frontend": {
         "name": "🎨 Frontend Developer",
         "emoji": "🎨",
+        "color": "🟣",
         "role": """Ты — Senior Frontend Developer.
 
-ОБЯЗАННОСТИ:
+ТВОЯ РАБОТА:
 - Создание современных UI
 - Адаптивная вёрстка (mobile-first)
-- Работа с API (fetch/axios)
-- Состояние приложения (Context/Redux)
-- Анимации и transitions
-- Accessibility (a11y)
+- Работа с API
+- Анимации
 - SEO оптимизация
 
 СТЕК:
-- HTML5, CSS3 (Flexbox, Grid, Custom Properties)
+- HTML5, CSS3 (Flexbox, Grid)
 - JavaScript ES6+ / TypeScript
 - React, Vue, Svelte
-- TailwindCSS, Bootstrap, Styled Components
-- Webpack, Vite, Parcel
+- TailwindCSS, Bootstrap
 
 ТРЕБОВАНИЯ:
-- Кроссбраузерность (Chrome, Firefox, Safari, Edge)
-- Производительность (<3 сек загрузка)
-- Семантическая вёрстка
-- ARIA атрибуты
-- Красивый современный дизайн
+✅ Кроссбраузерность
+✅ Производительность (<3 сек загрузка)
+✅ Семантическая вёрстка
+✅ Accessibility
+✅ Красивый современный дизайн
+✅ Анимации и hover-эффекты
 
-Создавай готовые к продакшену интерфейсы."""
+Создавай КРАСИВЫЕ и ФУНКЦИОНАЛЬНЫЕ интерфейсы!"""
     },
     
     "botdev": {
         "name": "🤖 Bot Developer",
         "emoji": "🤖",
+        "color": "🔷",
         "role": """Ты — Expert Telegram Bot Developer.
 
-ОБЯЗАННОСТИ:
-- Разработка Telegram ботов любой сложности
-- Inline кнопки, меню, callback queries
+ТВОЯ РАБОТА:
+- Telegram боты любой сложности
+- Inline кнопки, меню
 - Webhook / Long Polling
-- Обработка медиа (фото, видео, файлы)
-- Платежи (Telegram Stars, Stripe)
-- Админ-панели
+- Платежи
 - Интеграция с БД и API
 
 СТЕК:
 - Python: python-telegram-bot, aiogram, pyTelegramBotAPI
-- Node.js: node-telegram-bot-api, telegraf, grammy
-- БД: SQLite, PostgreSQL, MongoDB
+- Node.js: telegraf, grammy
 
 ФУНКЦИИ:
-- Команды (/start, /help и т.д.)
-- FSM (Finite State Machine) для диалогов
-- Inline режим
-- Callback кнопки
-- Реферальная система
-- Подписки и платежи
+✅ Команды (/start, /help)
+✅ FSM для диалогов
+✅ Inline кнопки
+✅ Callback handlers
+✅ Реферальная система
+✅ Админ-панель
 
-Пиши готовых к запуску ботов с полной документацией."""
-    },
-    
-    "security": {
-        "name": "🔒 Security Expert",
-        "emoji": "🔒",
-        "role": """Ты — Cybersecurity Specialist.
-
-ОБЯЗАННОСТИ:
-- Аудит кода на уязвимости
-- Защита от атак (SQL injection, XSS, CSRF, RCE)
-- Безопасное хранение данных
-- Rate limiting
-- Input validation и sanitization
-- Безопасность API (CORS, headers)
-- Аутентификация и авторизация
-
-ПРОВЕРЯЕШЬ:
-- SQL injection в запросах
-- XSS в пользовательском вводе
-- CSRF токены
-- Утечки секретов в коде
-- Слабые пароли
-- Небезопасные зависимости (npm audit, safety)
-- Open redirects
-- Exposed endpoints
-
-ФОРМАТ:
-**Уровень безопасности:** [1-10]/10
-
-**🔴 Критические проблемы:**
-- [проблема + место в коде]
-
-**🟡 Предупреждения:**
-- [проблема]
-
-**🟢 Рекомендации:**
-- [улучшение]
-
-**Исправленный код:**
-[безопасная версия]
-
-Будь параноиком, но конструктивным."""
-    },
-    
-    "devops": {
-        "name": "🚀 DevOps Engineer",
-        "emoji": "🚀",
-        "role": """Ты — Senior DevOps Engineer.
-
-ОБЯЗАННОСТИ:
-- Деплой на production
-- CI/CD пайплайны
-- Docker контейнеризация
-- Kubernetes (если нужно)
-- Мониторинг и логирование
-- Автоскейлинг
-
-ПЛАТФОРМЫ:
-- Vercel (фронтенд, Next.js, статика)
-- Railway (бэкенд, боты, БД)
-- Netlify (статика, JAMstack)
-- Fly.io (Docker, глобальный деплой)
-- GitHub Pages (статика, документация)
-- Render (альтернатива)
-
-ВЫДАЁШЬ:
-1. **Конфиги:**
-   - Dockerfile
-   - docker-compose.yml
-   - railway.json / vercel.json
-   - .github/workflows/deploy.yml (CI/CD)
-
-2. **ENV переменные** (список что нужно)
-
-3. **Пошаговые инструкции** деплоя
-
-4. **Команды для запуска**
-
-Делай так чтобы работало из коробки."""
-    },
-    
-    "pm": {
-        "name": "📊 Project Manager",
-        "emoji": "📊",
-        "role": """Ты — Technical Project Manager.
-
-ОБЯЗАННОСТИ:
-- Координация команды
-- Трекинг прогресса
-- Коммуникация с клиентом
-- Сбор финального результата
-- Документация
-- Следующие шаги
-
-ФОРМАТ ФИНАЛЬНОГО ОТЧЁТА:
-
-**📋 ПРОЕКТ: [название]**
-
-**✅ СТАТУС: [X]% готов**
-
-**ВЫПОЛНЕНО:**
-✅ Архитектура спроектирована
-✅ Backend API создан
-✅ Frontend UI готов
-✅ [Telegram бот создан] (если был)
-✅ Безопасность проверена
-✅ Конфиги деплоя готовы
-
-**📦 РЕЗУЛЬТАТЫ:**
-
-**Backend:**
-- Файлы: [список]
-- Endpoints: [список API]
-- БД схема: [описание]
-
-**Frontend:**
-- Файлы: [список]
-- Страницы: [список]
-- Компоненты: [список]
-
-**Деплой:**
-- Backend: [платформа + инструкция]
-- Frontend: [платформа + инструкция]
-
-**🔗 ССЫЛКИ:**
-- Демо: [URL если задеплоено]
-- Репозиторий: [GitHub URL если создан]
-- Документация: [README]
-
-**📌 СЛЕДУЮЩИЕ ШАГИ:**
-1. [что делать дальше]
-2. [...]
-
-**❓ НУЖНО ОТ КЛИЕНТА:**
-- [вопросы если есть]
-
-**⏱ ЗАТРАЧЕННОЕ ВРЕМЯ:** [оценка]
-
-Будь организованным, чётким, профессиональным."""
+Пиши ГОТОВЫХ К ЗАПУСКУ ботов!"""
     },
     
     "reviewer": {
         "name": "🔍 Code Reviewer",
         "emoji": "🔍",
+        "color": "🟡",
         "role": """Ты — Senior Code Reviewer.
 
-ОБЯЗАННОСТИ:
+ТВОЯ РАБОТА:
 - Детальный анализ кода
 - Проверка best practices
-- Поиск багов и code smells
+- Поиск багов
 - Предложения по улучшению
-- Проверка производительности
 
 ПРОВЕРЯЕШЬ:
-- Читаемость кода
-- DRY принцип (Don't Repeat Yourself)
-- SOLID принципы
-- Нейминг переменных и функций
-- Комментарии и документация
+- Читаемость
+- DRY, SOLID принципы
+- Нейминг
 - Обработка ошибок
-- Тесты (если есть)
-- Performance bottlenecks
+- Performance
 
 ФОРМАТ:
-**Общая оценка:** [1-10]/10
+📊 **ОЦЕНКА:** [1-10]/10
 
-**👍 Что сделано хорошо:**
-- [пункт]
+✅ **ПЛЮСЫ:**
+- [что хорошо]
 
-**⚠️ Проблемы:**
-- [проблема + строка кода]
+⚠️ **ПРОБЛЕМЫ:**
+- [проблема + строка]
 
-**💡 Рекомендации:**
-- [улучшение + пример кода]
+💡 **РЕКОМЕНДАЦИИ:**
+- [улучшение]
 
-**🐛 Потенциальные баги:**
+🐛 **ПОТЕНЦИАЛЬНЫЕ БАГИ:**
 - [баг + как исправить]
 
-**Улучшенная версия:**
-[рефакторенный код]
+Будь конструктивным!"""
+    },
+    
+    "security": {
+        "name": "🔒 Security Expert",
+        "emoji": "🔒",
+        "color": "🔴",
+        "role": """Ты — Cybersecurity Specialist.
 
-Будь конструктивным и помогающим."""
+ТВОЯ РАБОТА:
+- Аудит кода на уязвимости
+- Защита от атак
+- Безопасное хранение данных
+- Rate limiting
+
+ПРОВЕРЯЕШЬ:
+🔴 SQL injection
+🔴 XSS
+🔴 CSRF
+🔴 Утечки секретов
+🔴 Слабые пароли
+🔴 Open redirects
+
+ФОРМАТ:
+🛡 **УРОВЕНЬ БЕЗОПАСНОСТИ:** [1-10]/10
+
+🔴 **КРИТИЧЕСКИЕ:**
+- [уязвимость]
+
+🟡 **ПРЕДУПРЕЖДЕНИЯ:**
+- [проблема]
+
+🟢 **РЕКОМЕНДАЦИИ:**
+- [улучшение]
+
+Исправленный код в блоках ```"""
+    },
+    
+    "devops": {
+        "name": "🚀 DevOps Engineer",
+        "emoji": "🚀",
+        "color": "🟠",
+        "role": """Ты — Senior DevOps Engineer.
+
+ТВОЯ РАБОТА:
+- Деплой на production
+- Docker
+- CI/CD
+- Мониторинг
+
+ПЛАТФОРМЫ:
+- Vercel (фронтенд)
+- Railway (бэкенд, боты)
+- Netlify (статика)
+- Fly.io
+
+ВЫДАЁШЬ:
+1️⃣ **КОНФИГИ:**
+- Dockerfile
+- docker-compose.yml
+- railway.json / vercel.json
+
+2️⃣ **ENV ПЕРЕМЕННЫЕ** (список)
+
+3️⃣ **ИНСТРУКЦИИ** деплоя по шагам
+
+4️⃣ **КОМАНДЫ** для запуска
+
+Делай так чтобы работало ИЗ КОРОБКИ!"""
+    },
+    
+    "pm": {
+        "name": "📊 Project Manager",
+        "emoji": "📊",
+        "color": "⚪",
+        "role": """Ты — Technical Project Manager.
+
+ТВОЯ РАБОТА:
+- Координация команды
+- Финальный отчёт
+- Документация
+- Следующие шаги
+
+ФОРМАТ ОТЧЁТА:
+
+📋 **ПРОЕКТ:** [название]
+✅ **СТАТУС:** ГОТОВ
+
+━━━━━━━━━━━━━━━━━━━━━
+
+📦 **РЕЗУЛЬТАТЫ:**
+
+**Backend:**
+- Файлы: [список]
+- API endpoints: [список]
+
+**Frontend:**
+- Страницы: [список]
+- Компоненты: [список]
+
+**Деплой:**
+- Backend → [платформа]
+- Frontend → [платформа]
+
+━━━━━━━━━━━━━━━━━━━━━
+
+📌 **СЛЕДУЮЩИЕ ШАГИ:**
+1. [действие]
+2. [действие]
+
+💡 **СОВЕТЫ:**
+- [совет]
+
+Будь организованным и чётким!"""
     }
 }
 
@@ -384,12 +456,12 @@ AGENTS = {
 # ============================================================================
 
 class AIArmy:
-    """Рой из 7 ИИ-агентов с памятью"""
+    """Рой из 8 ИИ-агентов с памятью"""
     
     @staticmethod
     def call_agent(agent_name: str, task: str, context: str = "", 
                    memory: List[dict] = None) -> str:
-        """Вызов одного агента с учётом памяти"""
+        """Вызов одного агента"""
         
         if agent_name not in AGENTS:
             raise ValueError(f"Unknown agent: {agent_name}")
@@ -399,229 +471,214 @@ class AIArmy:
         # Формируем промпт
         system = f"{agent['role']}\n\n"
         
-        # Добавляем контекст проекта
         if context:
-            system += f"КОНТЕКСТ ПРОЕКТА:\n{context}\n\n"
+            system += f"📋 КОНТЕКСТ ПРОЕКТА:\n{context}\n\n"
         
-        # Добавляем память (последние 5 сообщений)
         if memory:
             memory_text = "\n".join([
-                f"{m['agent']}: {m['content'][:200]}..."
+                f"{m['agent']}: {m['content'][:150]}..."
                 for m in memory[-5:]
             ])
-            system += f"ИСТОРИЯ РАБОТЫ КОМАНДЫ:\n{memory_text}\n\n"
+            system += f"💬 РАБОТА КОМАНДЫ:\n{memory_text}\n\n"
         
-        full_prompt = f"{system}ТВОЯ ЗАДАЧА:\n{task}"
+        full_prompt = f"ТВОЯ ЗАДАЧА:\n{task}"
         
-        try:
-            # Используем thinking mode для сложных задач
-            use_thinking = agent_name in ["architect", "backend", "security"]
-            
-            model_name = "gemini-2.0-flash-thinking-exp-1219" if use_thinking else "gemini-2.0-flash-exp"
-            model = genai.GenerativeModel(model_name=model_name)
-            
-            response = model.generate_content(
-                full_prompt,
-                generation_config=genai.GenerationConfig(
-                    temperature=0.8,
-                    max_output_tokens=8000
-                )
-            )
-            
-            return response.text
-        
-        except Exception as e:
-            logger.error(f"Agent {agent_name} error: {e}")
-            raise
+        return call_gemini(full_prompt, system=system)
     
     @staticmethod
     def build_project(user_id: int, description: str, callback) -> dict:
         """Полный цикл создания проекта командой"""
         
-        project_memory = []  # Память команды
+        project_memory = []
         results = {}
         
-        # Определяем какие агенты нужны
         needs_bot = any(w in description.lower() for w in ['бот', 'telegram', 'тг'])
         
-        def add_to_memory(agent_name: str, content: str):
+        def add_memory(agent_name: str, content: str):
             project_memory.append({
                 "agent": AGENTS[agent_name]["name"],
                 "content": content,
                 "time": datetime.now()
             })
         
-        # ШАГ 1: Архитектор
-        callback(f"{AGENTS['architect']['emoji']} Архитектор проектирует систему...")
-        arch_result = AIArmy.call_agent("architect", description)
-        results["architect"] = arch_result
-        add_to_memory("architect", arch_result)
-        time.sleep(2)
+        def progress(step: int, total: int, text: str):
+            bar = "".join(["🟩" if i < step else "⬜" for i in range(total)])
+            callback(f"{bar} {step}/{total}\n\n{text}")
         
-        # ШАГ 2: Backend
-        callback(f"{AGENTS['backend']['emoji']} Backend Developer пишет серверную логику...")
-        backend_task = "Создай полный backend код согласно архитектуре. Готовый к запуску."
-        backend_result = AIArmy.call_agent("backend", backend_task, 
-                                          context=arch_result, memory=project_memory)
-        results["backend"] = backend_result
-        add_to_memory("backend", backend_result)
-        time.sleep(2)
+        total_steps = 7 if needs_bot else 6
+        step = 0
         
-        # ШАГ 3: Frontend
-        callback(f"{AGENTS['frontend']['emoji']} Frontend Developer создаёт интерфейс...")
-        frontend_task = "Создай полный frontend код с дизайном. Адаптивный, современный."
-        context_for_frontend = f"Архитектура:\n{arch_result}\n\nBackend API:\n{backend_result}"
-        frontend_result = AIArmy.call_agent("frontend", frontend_task,
-                                           context=context_for_frontend, memory=project_memory)
-        results["frontend"] = frontend_result
-        add_to_memory("frontend", frontend_result)
-        time.sleep(2)
+        # 1. Архитектор
+        step += 1
+        progress(step, total_steps, f"{AGENTS['architect']['emoji']} Архитектор проектирует систему...")
+        arch = AIArmy.call_agent("architect", description)
+        results["architect"] = arch
+        add_memory("architect", arch)
+        time.sleep(1)
         
-        # ШАГ 4: Bot (если нужен)
+        # 2. Backend
+        step += 1
+        progress(step, total_steps, f"{AGENTS['backend']['emoji']} Backend Developer пишет сервер...")
+        backend = AIArmy.call_agent("backend", 
+            "Создай полный backend код. Production-ready.", 
+            context=arch, memory=project_memory)
+        results["backend"] = backend
+        add_memory("backend", backend)
+        time.sleep(1)
+        
+        # 3. Frontend
+        step += 1
+        progress(step, total_steps, f"{AGENTS['frontend']['emoji']} Frontend Developer создаёт UI...")
+        ctx = f"Архитектура:\n{arch}\n\nBackend:\n{backend[:500]}"
+        frontend = AIArmy.call_agent("frontend",
+            "Создай полный frontend. Красивый современный дизайн.",
+            context=ctx, memory=project_memory)
+        results["frontend"] = frontend
+        add_memory("frontend", frontend)
+        time.sleep(1)
+        
+        # 4. Bot (если нужен)
         if needs_bot:
-            callback(f"{AGENTS['botdev']['emoji']} Bot Developer создаёт Telegram бота...")
-            bot_task = "Создай полный код Telegram бота. Готовый к запуску на Railway."
-            full_context = f"Архитектура:\n{arch_result}\n\nBackend:\n{backend_result}"
-            bot_result = AIArmy.call_agent("botdev", bot_task,
-                                          context=full_context, memory=project_memory)
-            results["bot"] = bot_result
-            add_to_memory("botdev", bot_result)
-            time.sleep(2)
+            step += 1
+            progress(step, total_steps, f"{AGENTS['botdev']['emoji']} Bot Developer создаёт бота...")
+            bot_code = AIArmy.call_agent("botdev",
+                "Создай полный Telegram бот. Готовый к запуску.",
+                context=ctx, memory=project_memory)
+            results["bot"] = bot_code
+            add_memory("botdev", bot_code)
+            time.sleep(1)
         
-        # ШАГ 5: Code Review
-        callback(f"{AGENTS['reviewer']['emoji']} Code Reviewer проверяет качество...")
-        review_task = "Проверь весь код. Найди проблемы, предложи улучшения."
-        all_code = f"Backend:\n{backend_result}\n\nFrontend:\n{frontend_result}"
-        if needs_bot and "bot" in results:
-            all_code += f"\n\nBot:\n{results['bot']}"
-        review_result = AIArmy.call_agent("reviewer", review_task,
-                                         context=all_code, memory=project_memory)
-        results["review"] = review_result
-        add_to_memory("reviewer", review_result)
-        time.sleep(2)
+        # 5. Code Review
+        step += 1
+        progress(step, total_steps, f"{AGENTS['reviewer']['emoji']} Code Reviewer проверяет код...")
+        all_code = f"Backend:\n{backend[:1000]}\n\nFrontend:\n{frontend[:1000]}"
+        review = AIArmy.call_agent("reviewer",
+            "Проверь код. Найди проблемы.",
+            context=all_code, memory=project_memory)
+        results["review"] = review
+        add_memory("reviewer", review)
+        time.sleep(1)
         
-        # ШАГ 6: Security
-        callback(f"{AGENTS['security']['emoji']} Security Expert проверяет безопасность...")
-        security_task = "Проверь код на уязвимости. Дай исправленные версии."
-        security_result = AIArmy.call_agent("security", security_task,
-                                           context=all_code, memory=project_memory)
-        results["security"] = security_result
-        add_to_memory("security", security_result)
-        time.sleep(2)
+        # 6. Security
+        step += 1
+        progress(step, total_steps, f"{AGENTS['security']['emoji']} Security Expert проверяет безопасность...")
+        security = AIArmy.call_agent("security",
+            "Проверь на уязвимости.",
+            context=all_code, memory=project_memory)
+        results["security"] = security
+        add_memory("security", security)
+        time.sleep(1)
         
-        # ШАГ 7: DevOps
-        callback(f"{AGENTS['devops']['emoji']} DevOps готовит деплой конфиги...")
-        devops_task = "Создай все конфиги для деплоя (Railway, Vercel). Инструкции."
-        devops_result = AIArmy.call_agent("devops", devops_task,
-                                         context=all_code, memory=project_memory)
-        results["devops"] = devops_result
-        add_to_memory("devops", devops_result)
-        time.sleep(2)
+        # 7. DevOps
+        step += 1
+        progress(step, total_steps, f"{AGENTS['devops']['emoji']} DevOps готовит деплой...")
+        devops = AIArmy.call_agent("devops",
+            "Создай конфиги для деплоя. Railway, Vercel.",
+            context=all_code, memory=project_memory)
+        results["devops"] = devops
+        add_memory("devops", devops)
+        time.sleep(1)
         
-        # ШАГ 8: Project Manager собирает
-        callback(f"{AGENTS['pm']['emoji']} Project Manager готовит финальный отчёт...")
-        pm_task = "Собери финальный отчёт для клиента. Что готово, ссылки, следующие шаги."
-        pm_context = "\n\n".join([f"{k.upper()}:\n{v}" for k, v in results.items()])
-        pm_result = AIArmy.call_agent("pm", pm_task,
-                                     context=pm_context, memory=project_memory)
-        results["pm"] = pm_result
+        # 8. PM собирает
+        progress(total_steps, total_steps, f"{AGENTS['pm']['emoji']} Project Manager готовит отчёт...")
+        pm_ctx = "\n\n".join([f"{k.upper()}:\n{v[:300]}" for k, v in results.items()])
+        pm = AIArmy.call_agent("pm",
+            "Собери финальный отчёт для клиента.",
+            context=pm_ctx, memory=project_memory)
+        results["pm"] = pm
         
         return results
 
 # ============================================================================
-# ПРОСТОЙ AI С ПАМЯТЬЮ (для обычных вопросов)
+# SMART AI — С ПАМЯТЬЮ
 # ============================================================================
 
 class SmartAI:
+    """AI с памятью разговора"""
+    
     @staticmethod
-    def call_with_memory(user_id: int, prompt: str, use_thinking: bool = False) -> str:
-        """AI с памятью разговора для простых вопросов"""
+    def chat(user_id: int, prompt: str) -> str:
+        """Ответ с учётом контекста разговора"""
         
+        # Инициализация памяти
         if user_id not in conversations:
             conversations[user_id] = []
         
-        # Добавляем в память
+        # Добавляем сообщение
         conversations[user_id].append({
             "role": "user",
             "content": prompt,
             "time": datetime.now()
         })
         
-        # Ограничиваем (последние 30 сообщений)
+        # Ограничиваем память (последние 30)
         if len(conversations[user_id]) > 30:
             conversations[user_id] = conversations[user_id][-30:]
         
         # Формируем контекст
         context = "\n".join([
-            f"{'Пользователь' if m['role']=='user' else 'Ассистент'}: {m['content']}"
+            f"{'👤 Ты' if m['role']=='user' else '🤖 Я'}: {m['content']}"
             for m in conversations[user_id][-10:]
         ])
         
-        system = f"""Ты — AI Code Assistant Pro.
+        system = f"""Ты — AI Code Assistant Pro v{BOT_VERSION}. 
+Умный, дружелюбный, профессиональный помощник программиста.
 
-ПРАВИЛА:
-- ПОМНИШЬ весь контекст разговора
-- Работаешь итеративно (доработки, улучшения)
-- Пишешь ПОЛНЫЙ код, не фрагменты
-- Всегда комментарии
-- Python 3.12+, modern JS/TS
+🧠 ТВОИ СПОСОБНОСТИ:
+- Писать код любой сложности
+- Находить и исправлять баги
+- Объяснять сложные концепции просто
+- Рефакторинг и оптимизация
+- Code review
+- Работа над проектами итеративно
 
-МОЖЕШЬ:
-- Писать код
-- Находить баги
-- Объяснять
-- Рефакторинг
-- Поиск информации
+📝 ПРАВИЛА:
+1. ПОМНИШЬ весь контекст разговора
+2. Если просят "доработай" — улучшаешь ПРЕДЫДУЩИЙ код
+3. Пишешь ПОЛНЫЙ код, не фрагменты
+4. Добавляешь комментарии
+5. Используешь современные практики
+6. Отвечаешь по делу, но дружелюбно
+7. Используй эмодзи для наглядности
 
-КОНТЕКСТ РАЗГОВОРА:
+💬 ИСТОРИЯ РАЗГОВОРА:
 {context}
 
-Отвечай кратко. Код в блоках ```."""
+Отвечай полезно и по существу. Код в блоках ```язык"""
 
-        try:
-            model_name = "gemini-2.0-flash-thinking-exp-1219" if use_thinking else "gemini-2.0-flash-exp"
-            model = genai.GenerativeModel(model_name=model_name)
-            
-            response = model.generate_content(
-                f"{system}\n\nНОВЫЙ ЗАПРОС:\n{prompt}",
-                generation_config=genai.GenerationConfig(
-                    temperature=0.7,
-                    max_output_tokens=8000
-                )
-            )
-            
-            result = response.text
-            
-            # Сохраняем ответ
-            conversations[user_id].append({
-                "role": "assistant",
-                "content": result,
-                "time": datetime.now()
-            })
-            
-            return result
+        # Вызов AI
+        result = call_gemini(prompt, system=system)
         
-        except Exception as e:
-            logger.error(f"AI error: {e}")
-            raise
+        # Сохраняем ответ
+        conversations[user_id].append({
+            "role": "assistant",
+            "content": result,
+            "time": datetime.now()
+        })
+        
+        return result
 
 # ============================================================================
-# ПОИСК И КРИПТА
+# ПОИСК И УТИЛИТЫ
 # ============================================================================
 
 def get_crypto_price(symbol: str = "BTC") -> str:
+    """Получить курс криптовалюты"""
     try:
         url = f"https://api.coinbase.com/v2/prices/{symbol}-USD/spot"
         r = requests.get(url, timeout=5)
         r.raise_for_status()
-        data = r.json()
-        price = data["data"]["amount"]
-        return f"💰 **{symbol}/USD**: ${float(price):,.2f}"
-    except:
-        return f"❌ Ошибка получения курса {symbol}"
+        price = float(r.json()["data"]["amount"])
+        
+        # Красивое форматирование
+        emoji = "📈" if symbol == "BTC" else "💎" if symbol == "ETH" else "💰"
+        return f"{emoji} **{symbol}/USD:** ${price:,.2f}"
+    except Exception as e:
+        logger.error(f"Crypto error: {e}")
+        return f"❌ Не удалось получить курс {symbol}"
 
 def search_web(query: str) -> str:
-    """Поиск через DuckDuckGo"""
+    """Поиск в интернете"""
     try:
         url = f"https://api.duckduckgo.com/?q={requests.utils.quote(query)}&format=json"
         r = requests.get(url, timeout=10)
@@ -641,114 +698,82 @@ def search_web(query: str) -> str:
                 if isinstance(topic, dict) and "Text" in topic:
                     result += f"• {topic['Text'][:100]}...\n"
         
-        return result if len(result) > 40 else "🔍 Ничего не найдено"
+        return result if len(result) > 40 else "🔍 Ничего не найдено. Попробуй переформулировать!"
     except Exception as e:
         logger.error(f"Search error: {e}")
         return "❌ Ошибка поиска"
 
-# ============================================================================
-# ФАЙЛЫ
-# ============================================================================
-
-def extract_code_from_file(file_content: bytes, filename: str) -> str:
-    """Извлекает код из файла"""
-    try:
-        # Определяем кодировку
-        text = file_content.decode('utf-8')
-        return f"```{get_file_extension(filename)}\n{text}\n```"
-    except:
-        try:
-            text = file_content.decode('latin-1')
-            return f"```{get_file_extension(filename)}\n{text}\n```"
-        except:
-            return "❌ Не удалось прочитать файл"
-
-def get_file_extension(filename: str) -> str:
-    ext = filename.split('.')[-1].lower()
-    lang_map = {
-        'py': 'python',
-        'js': 'javascript',
-        'ts': 'typescript',
-        'html': 'html',
-        'css': 'css',
-        'json': 'json',
-        'md': 'markdown'
-    }
-    return lang_map.get(ext, ext)
-
-# ============================================================================
-# СОЗДАНИЕ ZIP
-# ============================================================================
-
-def create_project_zip(results: dict, project_name: str) -> bytes:
-    """Создаёт ZIP архив проекта"""
-    zip_buffer = io.BytesIO()
+def create_project_zip(results: dict, name: str) -> bytes:
+    """Создание ZIP архива проекта"""
+    buffer = io.BytesIO()
     
-    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
-        # Извлекаем код из результатов
-        for agent_name, content in results.items():
-            # Ищем блоки кода
-            code_blocks = re.findall(r'```(\w+)?\n(.*?)```', content, re.DOTALL)
+    with zipfile.ZipFile(buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for agent, content in results.items():
+            # Извлекаем код
+            blocks = re.findall(r'```(\w+)?\n(.*?)```', content, re.DOTALL)
             
-            for i, (lang, code) in enumerate(code_blocks):
-                if not lang:
-                    lang = 'txt'
+            for i, (lang, code) in enumerate(blocks):
+                lang = lang or 'txt'
                 
-                # Определяем путь файла
-                if agent_name == "backend":
-                    filepath = f"backend/main.{lang}"
-                elif agent_name == "frontend":
-                    filepath = f"frontend/index.{lang}"
-                elif agent_name == "bot":
-                    filepath = f"bot/bot.{lang}"
-                elif agent_name == "devops":
-                    filepath = f"{lang}"
+                if agent == "backend":
+                    path = f"backend/main.{lang}"
+                elif agent == "frontend":
+                    path = f"frontend/index.{lang}"
+                elif agent == "bot":
+                    path = f"bot/bot.{lang}"
+                elif agent == "devops":
+                    path = lang
                 else:
-                    filepath = f"{agent_name}/{i}.{lang}"
+                    path = f"{agent}_{i}.{lang}"
                 
-                zf.writestr(filepath, code.strip())
+                zf.writestr(path, code.strip())
         
         # README
-        readme = f"""# {project_name}
-
-Проект создан AI CODE ARMY
-
-## Структура
-
-- `backend/` — серверная логика
-- `frontend/` — интерфейс
-- `bot/` — Telegram бот (если есть)
-
-## Запуск
-
-См. инструкции в результатах от DevOps Engineer.
-
----
-
-Создано с помощью AI CODE ARMY 🤖
-"""
-        zf.writestr("README.md", readme)
+        zf.writestr("README.md", f"# {name}\n\nСоздано AI CODE ARMY 🤖\n")
     
-    return zip_buffer.getvalue()
+    return buffer.getvalue()
+
+def extract_code_from_file(content: bytes, filename: str) -> str:
+    """Извлечь код из файла"""
+    try:
+        text = content.decode('utf-8')
+    except:
+        text = content.decode('latin-1', errors='ignore')
+    
+    ext = filename.split('.')[-1].lower()
+    lang_map = {'py': 'python', 'js': 'javascript', 'ts': 'typescript', 
+                'html': 'html', 'css': 'css', 'json': 'json'}
+    lang = lang_map.get(ext, ext)
+    
+    return f"```{lang}\n{text}\n```"
 
 # ============================================================================
 # USER MANAGEMENT
 # ============================================================================
 
 def get_user(user_id: int, username: str = None) -> dict:
+    """Получить/создать пользователя"""
     if user_id not in user_data:
         user_data[user_id] = {
             "username": username,
             "created": datetime.now(),
-            "total": 0,
+            "total_requests": 0,
+            "projects": 0,
             "referrals": 0,
-            "projects": 0
+            "last_active": datetime.now()
         }
-        stats["users"] += 1
+        stats["users_total"] += 1
+    else:
+        user_data[user_id]["last_active"] = datetime.now()
+        if username:
+            user_data[user_id]["username"] = username
     return user_data[user_id]
 
 def is_admin(username: str) -> bool:
-    return username in ADMINS
+    return username in ADMINS if username else False
+
+def is_premium(user_id: int, username: str) -> bool:
+    return is_admin(username) or user_id in PREMIUM_USERS
 
 def get_today_usage(user_id: int) -> int:
     today = date.today()
@@ -761,16 +786,30 @@ def increment_usage(user_id: int):
     if user_id not in user_usage:
         user_usage[user_id] = {}
     user_usage[user_id][today] = user_usage[user_id].get(today, 0) + 1
-    get_user(user_id)["total"] += 1
+    get_user(user_id)["total_requests"] += 1
+    stats["total_requests"] += 1
+    stats["messages_today"] += 1
 
 def can_use(user_id: int, username: str) -> Tuple[bool, str]:
+    """Проверка лимитов"""
     if is_admin(username):
         return True, ""
+    
     if user_id in PREMIUM_USERS:
         return True, ""
+    
     today = get_today_usage(user_id)
     if today >= FREE_DAILY_LIMIT:
-        return False, f"⚠️ Лимит ({FREE_DAILY_LIMIT}/день)\n\n⭐ /premium"
+        return False, f"""⚠️ **Дневной лимит исчерпан!**
+
+Использовано: {today}/{FREE_DAILY_LIMIT}
+
+🔓 **Получить больше:**
+• Premium подписка → /premium
+• Пригласить друзей → бонусные запросы
+
+Лимит обновится завтра в 00:00 ⏰"""
+    
     return True, ""
 
 def clear_memory(user_id: int):
@@ -778,22 +817,35 @@ def clear_memory(user_id: int):
         conversations[user_id] = []
 
 # ============================================================================
-# МЕНЮ
+# МЕНЮ И КНОПКИ
 # ============================================================================
 
-def get_menu(is_admin=False):
-    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+def get_main_menu(is_adm: bool = False) -> types.ReplyKeyboardMarkup:
+    """Главное меню"""
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     buttons = [
         types.KeyboardButton("🏗️ Создать проект"),
-        types.KeyboardButton("💬 Простой вопрос"),
+        types.KeyboardButton("💬 Задать вопрос"),
         types.KeyboardButton("📊 Статистика"),
         types.KeyboardButton("🧹 Очистить память"),
+        types.KeyboardButton("💰 Крипта"),
         types.KeyboardButton("⭐ Premium"),
     ]
-    if is_admin:
-        buttons.insert(3, types.KeyboardButton("👑 Админ"))
-    keyboard.add(*buttons)
-    return keyboard
+    if is_adm:
+        buttons.append(types.KeyboardButton("👑 Админ-панель"))
+    kb.add(*buttons)
+    return kb
+
+def get_inline_actions() -> types.InlineKeyboardMarkup:
+    """Inline кнопки быстрых действий"""
+    kb = types.InlineKeyboardMarkup(row_width=2)
+    kb.add(
+        types.InlineKeyboardButton("💻 Написать код", callback_data="action_code"),
+        types.InlineKeyboardButton("🔍 Найти баг", callback_data="action_debug"),
+        types.InlineKeyboardButton("📖 Объяснить", callback_data="action_explain"),
+        types.InlineKeyboardButton("✨ Улучшить", callback_data="action_improve"),
+    )
+    return kb
 
 # ============================================================================
 # КОМАНДЫ
@@ -806,101 +858,257 @@ def cmd_start(message):
     user = get_user(user_id, username)
     
     # Реферальная система
-    if message.text.startswith('/start ref_'):
+    if ' ' in message.text:
         try:
-            ref_id = int(message.text.split('_')[1])
+            ref_id = int(message.text.split()[1].replace('ref_', ''))
             if ref_id != user_id and ref_id in user_data:
                 user_data[ref_id]["referrals"] += 1
-                bot.send_message(ref_id, "🎉 По вашей ссылке зарегистрировался пользователь!\n+3 бесплатных запроса")
+                bot.send_message(ref_id, 
+                    "🎉 По вашей ссылке пришёл новый пользователь!\n+3 бонусных запроса!")
         except:
             pass
     
     is_adm = is_admin(username)
+    tip = random.choice(WELCOME_TIPS)
     
-    welcome = f"""🤖 **AI CODE ARMY**
-Рой из 7 ИИ-агентов
+    welcome = f"""🤖 **AI CODE ARMY v{BOT_VERSION}**
+━━━━━━━━━━━━━━━━━━━━━
 
-Привет, {message.from_user.first_name}!
+Привет, **{message.from_user.first_name}**! 👋
 
-**МЫ СОЗДАЁМ:**
-🌐 Сайты (Vercel/Netlify)
-🤖 Telegram ботов (Railway)
-⚙️ Backend API (Flask/FastAPI)
-🎨 Современные UI (React/Vue)
-📦 Готовые проекты (ZIP)
+Я — команда из **8 ИИ-агентов**:
 
-**КОМАНДА:**
 {AGENTS['architect']['emoji']} Архитектор
-{AGENTS['backend']['emoji']} Backend Dev
-{AGENTS['frontend']['emoji']} Frontend Dev
+{AGENTS['backend']['emoji']} Backend Developer
+{AGENTS['frontend']['emoji']} Frontend Developer
 {AGENTS['botdev']['emoji']} Bot Developer
 {AGENTS['reviewer']['emoji']} Code Reviewer
 {AGENTS['security']['emoji']} Security Expert
 {AGENTS['devops']['emoji']} DevOps Engineer
 {AGENTS['pm']['emoji']} Project Manager
 
-**ОСОБЕННОСТИ:**
-✅ Память разговора
-✅ Итеративная работа
-✅ Поиск в интернете
-✅ Работа с файлами
-✅ Курсы криптовалют
+━━━━━━━━━━━━━━━━━━━━━
 
-**ТАРИФЫ:**
-🆓 {FREE_DAILY_LIMIT} запросов/день
-⭐ Premium: безлимит
+🎯 **ЧТО МОГУ:**
+• Создавать полные проекты (сайты, боты, API)
+• Писать и улучшать код
+• Находить и исправлять баги
+• Объяснять сложные вещи просто
+• Помнить наш разговор
 
-{"👑 **ВЫ АДМИН** — безлимит!" if is_adm else ""}
+📊 **ТВОЙ ТАРИФ:**
+{'👑 АДМИН — безлимит!' if is_adm else f'🆓 Free — {FREE_DAILY_LIMIT} запросов/день'}
 
-Используй кнопки ниже! 👇"""
+{tip}
+
+**Используй кнопки ниже или пиши свободно!** 👇"""
     
-    bot.send_message(message.chat.id, welcome, reply_markup=get_menu(is_adm), parse_mode="Markdown")
+    bot.send_message(
+        message.chat.id, 
+        welcome, 
+        reply_markup=get_main_menu(is_adm),
+        parse_mode="Markdown"
+    )
 
 @bot.message_handler(commands=['help'])
 def cmd_help(message):
-    help_text = """📖 **Справка**
+    help_text = """📖 **СПРАВКА**
+━━━━━━━━━━━━━━━━━━━━━
 
-**Создание проекта:**
-🏗️ Нажми кнопку "Создать проект"
-Опиши что нужно → команда из 7 агентов создаст за 3-5 минут
+**🏗️ Создание проекта:**
+Нажми кнопку → опиши что нужно → команда из 8 агентов создаст за 3-5 минут!
 
-**Простые вопросы:**
-💬 Помощь с кодом, объяснения, дебаг
+**💬 Простые вопросы:**
+Просто пиши! Я помню весь разговор.
 
-**Память:**
-Бот помнит весь разговор. Можешь писать "доработай", "исправь" и он поймёт контекст
+**🔄 Итеративная работа:**
+"Доработай код" / "Исправь" / "Добавь функцию"
+Я понимаю контекст!
 
-**Файлы:**
-Отправь файл с кодом → бот проанализирует
+**📁 Работа с файлами:**
+Отправь файл с кодом → попроси проверить/улучшить
 
-**Поиск:**
-"Найди курс биткоина"
-"Поищи информацию о React 19"
+**🔍 Поиск:**
+"Найди информацию о React 19"
+"Курс биткоина"
 
-**Команды:**
-/start — начало
-/help — справка
-/stats — статистика
-/clear — очистить память
-/premium — Premium подписка
+━━━━━━━━━━━━━━━━━━━━━
+
+**КОМАНДЫ:**
+/start — Начало
+/help — Эта справка
+/stats — Статистика
+/clear — Очистить память
+/premium — Подписка
+/project — Создать проект
+
+━━━━━━━━━━━━━━━━━━━━━
+
+**ПРИМЕРЫ ЗАПРОСОВ:**
+• "Напиши Telegram бота для заказов"
+• "Найди баг в этом коде: [код]"
+• "Объясни что такое Docker"
+• "Создай лендинг для кофейни"
 """
     bot.send_message(message.chat.id, help_text, parse_mode="Markdown")
 
+@bot.message_handler(commands=['stats'])
+def cmd_stats(message):
+    user_id = message.from_user.id
+    username = message.from_user.username or ""
+    user = get_user(user_id)
+    today = get_today_usage(user_id)
+    
+    status = "👑 Админ" if is_admin(username) else ("⭐ Premium" if user_id in PREMIUM_USERS else "🆓 Free")
+    limit = "∞" if is_premium(user_id, username) else str(FREE_DAILY_LIMIT)
+    memory = len(conversations.get(user_id, []))
+    
+    text = f"""📊 **ТВОЯ СТАТИСТИКА**
+━━━━━━━━━━━━━━━━━━━━━
+
+👤 **Статус:** {status}
+📅 **Сегодня:** {today}/{limit}
+📈 **Всего запросов:** {user['total_requests']}
+🏗️ **Проектов:** {user['projects']}
+💾 **Память:** {memory} сообщений
+👥 **Рефералов:** {user['referrals']}
+
+━━━━━━━━━━━━━━━━━━━━━
+
+🌍 **ГЛОБАЛЬНО:**
+👥 Пользователей: {stats['users_total']}
+📨 Запросов всего: {stats['total_requests']}
+✅ Успешных: {stats['successful']}
+🏗️ Проектов: {stats['projects_created']}
+"""
+    bot.send_message(message.chat.id, text, parse_mode="Markdown")
+
+@bot.message_handler(commands=['clear'])
+def cmd_clear(message):
+    clear_memory(message.from_user.id)
+    bot.reply_to(message, "🧹 Память очищена!\n\nНачинаем с чистого листа. Чем могу помочь?")
+
+@bot.message_handler(commands=['premium'])
+def cmd_premium(message):
+    user_id = message.from_user.id
+    username = message.from_user.username or ""
+    
+    if is_admin(username):
+        bot.send_message(message.chat.id, "👑 Вы **АДМИН** — у вас уже безлимит!", parse_mode="Markdown")
+        return
+    
+    if user_id in PREMIUM_USERS:
+        bot.send_message(message.chat.id, "⭐ У вас уже активен **Premium**!", parse_mode="Markdown")
+        return
+    
+    user = get_user(user_id)
+    ref_link = f"https://t.me/{bot.get_me().username}?start=ref_{user_id}"
+    
+    text = f"""⭐ **AI CODE ARMY PREMIUM**
+━━━━━━━━━━━━━━━━━━━━━
+
+**🆓 FREE (сейчас):**
+• {FREE_DAILY_LIMIT} запросов/день
+• Все функции
+• Память разговора
+
+**⭐ PREMIUM — 499₽/мес:**
+✅ БЕЗЛИМИТ запросов
+✅ Приоритетная обработка
+✅ Расширенная память (100 сообщений)
+✅ Ранний доступ к новым функциям
+✅ Поддержка 24/7
+
+━━━━━━━━━━━━━━━━━━━━━
+
+**💳 КАК ОПЛАТИТЬ:**
+
+1️⃣ Переведи **499₽** на карту:
+`{CARD_NUMBER}`
+
+2️⃣ Комментарий: `Premium {user_id}`
+
+3️⃣ Скинь скрин оплаты сюда
+
+4️⃣ Активация за **10 минут**!
+
+━━━━━━━━━━━━━━━━━━━━━
+
+**🎁 ИЛИ БЕСПЛАТНО:**
+Пригласи **15 друзей** = вечный Premium!
+
+Твоя ссылка:
+`{ref_link}`
+
+Приглашено: **{user['referrals']}/15**
+"""
+    bot.send_message(message.chat.id, text, parse_mode="Markdown")
+
+@bot.message_handler(commands=['admin'])
+def cmd_admin(message):
+    username = message.from_user.username or ""
+    
+    if not is_admin(username):
+        return
+    
+    uptime = datetime.now() - stats["started_at"]
+    hours = int(uptime.total_seconds() // 3600)
+    mins = int((uptime.total_seconds() % 3600) // 60)
+    
+    active = sum(1 for uid, usage in user_usage.items() if date.today() in usage)
+    
+    text = f"""👑 **АДМИН-ПАНЕЛЬ**
+━━━━━━━━━━━━━━━━━━━━━
+
+**📊 СТАТИСТИКА:**
+⏱ Аптайм: {hours}ч {mins}мин
+👥 Всего юзеров: {stats['users_total']}
+⭐ Premium: {len(PREMIUM_USERS)}
+🟢 Активных сегодня: {active}
+
+**📨 ЗАПРОСЫ:**
+Всего: {stats['total_requests']}
+✅ Успешно: {stats['successful']}
+❌ Ошибок: {stats['errors']}
+📅 Сегодня: {stats['messages_today']}
+
+**🏗️ ПРОЕКТЫ:**
+Создано: {stats['projects_created']}
+
+━━━━━━━━━━━━━━━━━━━━━
+
+**🏆 ТОП-5 ПОЛЬЗОВАТЕЛЕЙ:**
+"""
+    
+    top = sorted(user_data.items(), key=lambda x: x[1]['total_requests'], reverse=True)[:5]
+    for i, (uid, data) in enumerate(top, 1):
+        text += f"{i}. @{data.get('username', '?')} — {data['total_requests']} запросов\n"
+    
+    bot.send_message(message.chat.id, text, parse_mode="Markdown")
+
+# ============================================================================
+# КНОПКИ МЕНЮ
+# ============================================================================
+
 @bot.message_handler(func=lambda m: m.text == "🏗️ Создать проект")
-def btn_create_project(message):
-    msg = bot.send_message(
-        message.chat.id,
-        "🏗️ **Создание проекта**\n\n"
-        "Опишите что создать:\n\n"
-        "**Примеры:**\n"
-        "• Сайт-визитку для кофейни\n"
-        "• Telegram бота для приёма заказов\n"
-        "• Landing page для IT курсов\n"
-        "• Интернет-магазин на React\n"
-        "• API для мобильного приложения\n\n"
-        "Команда создаст за 3-5 минут!",
-        parse_mode="Markdown"
-    )
+def btn_project(message):
+    text = """🏗️ **СОЗДАНИЕ ПРОЕКТА**
+━━━━━━━━━━━━━━━━━━━━━
+
+Опиши что нужно создать, и команда из **8 агентов** сделает это!
+
+**ПРИМЕРЫ:**
+• "Сайт-визитку для фотографа"
+• "Telegram бота для приёма заказов"
+• "Landing page для IT-курсов"
+• "REST API для мобильного приложения"
+• "Интернет-магазин на React"
+
+━━━━━━━━━━━━━━━━━━━━━
+
+✏️ **Опиши свой проект:**"""
+    
+    msg = bot.send_message(message.chat.id, text, parse_mode="Markdown")
     bot.register_next_step_handler(msg, process_project)
 
 def process_project(message):
@@ -909,29 +1117,27 @@ def process_project(message):
     description = message.text.strip()
     
     if len(description) < 10:
-        bot.reply_to(message, "❌ Опишите подробнее (мин. 10 символов)")
+        bot.reply_to(message, "❌ Опиши подробнее (минимум 10 символов)")
         return
     
     can, err = can_use(user_id, username)
     if not can:
-        bot.reply_to(message, err)
+        bot.reply_to(message, err, parse_mode="Markdown")
         return
     
     get_user(user_id, username)
-    logger.info(f"PROJECT: @{username} — {description[:50]}...")
+    logger.info(f"🏗️ PROJECT: @{username} — {description[:50]}...")
     
     status_msg = bot.send_message(
         message.chat.id,
-        "⚙️ **AI CODE ARMY запущена!**\n\n"
-        "Команда начала работу...\n"
-        "⏱ 3-5 минут",
+        f"🚀 **AI CODE ARMY запущена!**\n\n{random.choice(THINKING_PHRASES)}\n\n⏱ 3-5 минут",
         parse_mode="Markdown"
     )
     
     def update_status(text):
         try:
             bot.edit_message_text(
-                f"⚙️ **Работаем...**\n\n{text}",
+                f"🚀 **Работаем...**\n\n{text}",
                 chat_id=message.chat.id,
                 message_id=status_msg.message_id,
                 parse_mode="Markdown"
@@ -940,15 +1146,13 @@ def process_project(message):
             pass
     
     try:
-        # Запуск команды
         results = AIArmy.build_project(user_id, description, update_status)
         
         increment_usage(user_id)
         get_user(user_id)["projects"] += 1
-        stats["success"] += 1
-        stats["projects"] += 1
+        stats["successful"] += 1
+        stats["projects_created"] += 1
         
-        # Сохраняем проект
         project_mode[user_id] = {
             "description": description,
             "results": results,
@@ -960,31 +1164,32 @@ def process_project(message):
         except:
             pass
         
-        # Отправляем результаты
-        bot.send_message(message.chat.id, "✅ **ПРОЕКТ ГОТОВ!**", parse_mode="Markdown")
+        # Отправляем результат
+        bot.send_message(message.chat.id, f"🎉 **ПРОЕКТ ГОТОВ!**\n\n{random.choice(SUCCESS_PHRASES)}", parse_mode="Markdown")
         
-        # PM отчёт (главное)
+        # PM отчёт
         if "pm" in results:
-            send_long(message.chat.id, f"📊 **ОТЧЁТ**\n\n{results['pm']}")
+            send_long(message.chat.id, results["pm"])
         
-        # Остальное по кнопкам
-        keyboard = types.InlineKeyboardMarkup(row_width=2)
-        keyboard.add(
-            types.InlineKeyboardButton("📋 Архитектура", callback_data="show_architect"),
-            types.InlineKeyboardButton("💻 Backend", callback_data="show_backend"),
-            types.InlineKeyboardButton("🎨 Frontend", callback_data="show_frontend"),
-            types.InlineKeyboardButton("🔒 Security", callback_data="show_security"),
-            types.InlineKeyboardButton("🚀 DevOps", callback_data="show_devops"),
+        # Кнопки для детального просмотра
+        kb = types.InlineKeyboardMarkup(row_width=2)
+        kb.add(
+            types.InlineKeyboardButton("🧠 Архитектура", callback_data="view_architect"),
+            types.InlineKeyboardButton("💻 Backend", callback_data="view_backend"),
+            types.InlineKeyboardButton("🎨 Frontend", callback_data="view_frontend"),
+            types.InlineKeyboardButton("🔒 Security", callback_data="view_security"),
+            types.InlineKeyboardButton("🚀 DevOps", callback_data="view_devops"),
             types.InlineKeyboardButton("📦 Скачать ZIP", callback_data="download_zip"),
         )
         
         if "bot" in results:
-            keyboard.add(types.InlineKeyboardButton("🤖 Bot код", callback_data="show_bot"))
+            kb.add(types.InlineKeyboardButton("🤖 Bot код", callback_data="view_bot"))
         
         bot.send_message(
             message.chat.id,
-            "💡 **Действия:**",
-            reply_markup=keyboard
+            "📂 **Детали проекта:**",
+            reply_markup=kb,
+            parse_mode="Markdown"
         )
         
     except Exception as e:
@@ -996,10 +1201,14 @@ def process_project(message):
         except:
             pass
         
-        bot.send_message(message.chat.id, f"❌ Ошибка: {str(e)[:200]}")
+        bot.send_message(
+            message.chat.id,
+            f"❌ **Ошибка:** {str(e)[:200]}\n\nПопробуй переформулировать или повторить позже.",
+            parse_mode="Markdown"
+        )
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("show_"))
-def handle_show_callbacks(call):
+@bot.callback_query_handler(func=lambda c: c.data.startswith("view_"))
+def handle_view(call):
     user_id = call.from_user.id
     
     if user_id not in project_mode:
@@ -1007,59 +1216,54 @@ def handle_show_callbacks(call):
         return
     
     results = project_mode[user_id]["results"]
+    part = call.data.replace("view_", "")
     
-    part = call.data.replace("show_", "")
-    
-    titles = {
+    names = {
         "architect": "🧠 АРХИТЕКТУРА",
-        "backend": "💻 BACKEND КОД",
-        "frontend": "🎨 FRONTEND КОД",
-        "bot": "🤖 BOT КОД",
+        "backend": "💻 BACKEND",
+        "frontend": "🎨 FRONTEND",
+        "bot": "🤖 BOT",
         "security": "🔒 БЕЗОПАСНОСТЬ",
-        "devops": "🚀 ДЕПЛОЙ"
+        "devops": "🚀 DEVOPS",
+        "review": "🔍 CODE REVIEW"
     }
     
     if part in results:
         bot.answer_callback_query(call.id)
-        send_long(call.message.chat.id, f"**{titles.get(part, part.upper())}**\n\n{results[part]}")
+        send_long(call.message.chat.id, f"**{names.get(part, part.upper())}**\n\n{results[part]}")
     else:
         bot.answer_callback_query(call.id, "❌ Раздел не найден")
 
-@bot.callback_query_handler(func=lambda call: call.data == "download_zip")
-def handle_download_zip(call):
+@bot.callback_query_handler(func=lambda c: c.data == "download_zip")
+def handle_zip(call):
     user_id = call.from_user.id
     
     if user_id not in project_mode:
         bot.answer_callback_query(call.id, "❌ Проект не найден")
         return
     
-    bot.answer_callback_query(call.id, "📦 Создаю ZIP...")
+    bot.answer_callback_query(call.id, "📦 Создаю архив...")
     
     try:
         project = project_mode[user_id]
-        project_name = f"project_{user_id}"
-        
-        zip_data = create_project_zip(project["results"], project_name)
+        zip_data = create_project_zip(project["results"], f"project_{user_id}")
         
         bot.send_document(
             call.message.chat.id,
             document=zip_data,
-            visible_file_name=f"{project_name}.zip",
-            caption="📦 Весь проект в одном архиве"
+            visible_file_name=f"project_{user_id}.zip",
+            caption="📦 **Весь проект в одном архиве!**"
         )
     except Exception as e:
-        logger.error(f"ZIP error: {e}")
-        bot.send_message(call.message.chat.id, f"❌ Ошибка создания ZIP: {str(e)}")
+        bot.send_message(call.message.chat.id, f"❌ Ошибка: {str(e)}")
 
-@bot.message_handler(func=lambda m: m.text == "💬 Простой вопрос")
-def btn_simple(message):
+@bot.message_handler(func=lambda m: m.text == "💬 Задать вопрос")
+def btn_question(message):
     bot.send_message(
         message.chat.id,
-        "💬 Задайте вопрос:\n\n"
-        "• Помощь с кодом\n"
-        "• Объяснение\n"
-        "• Дебаг\n"
-        "• Поиск информации"
+        "💬 **Задай свой вопрос!**\n\nЯ помню наш разговор и могу:\n\n• Писать код\n• Находить баги\n• Объяснять\n• Улучшать\n\nПросто напиши что нужно! 👇",
+        reply_markup=get_inline_actions(),
+        parse_mode="Markdown"
     )
 
 @bot.message_handler(func=lambda m: m.text == "📊 Статистика")
@@ -1070,150 +1274,89 @@ def btn_stats(message):
 def btn_clear(message):
     cmd_clear(message)
 
+@bot.message_handler(func=lambda m: m.text == "💰 Крипта")
+def btn_crypto(message):
+    btc = get_crypto_price("BTC")
+    eth = get_crypto_price("ETH")
+    
+    text = f"""💰 **КУРСЫ КРИПТОВАЛЮТ**
+━━━━━━━━━━━━━━━━━━━━━
+
+{btc}
+{eth}
+
+━━━━━━━━━━━━━━━━━━━━━
+🕐 Обновлено: {datetime.now().strftime('%H:%M:%S')}
+
+Напиши "курс SOL" или "курс BTC" для других монет!
+"""
+    bot.send_message(message.chat.id, text, parse_mode="Markdown")
+
 @bot.message_handler(func=lambda m: m.text == "⭐ Premium")
 def btn_premium(message):
     cmd_premium(message)
 
-@bot.message_handler(func=lambda m: m.text == "👑 Админ")
+@bot.message_handler(func=lambda m: m.text == "👑 Админ-панель")
 def btn_admin(message):
     cmd_admin(message)
 
-@bot.message_handler(commands=['premium'])
-def cmd_premium(message):
-    user_id = message.from_user.id
-    username = message.from_user.username or ""
-    
-    if is_admin(username):
-        bot.send_message(message.chat.id, "👑 Админ — безлимит!")
-        return
-    
-    if user_id in PREMIUM_USERS:
-        bot.send_message(message.chat.id, "✅ Premium активен!")
-        return
-    
-    user = get_user(user_id)
-    ref_link = f"https://t.me/{bot.get_me().username}?start=ref_{user_id}"
-    
-    msg = f"""⭐ **AI CODE ARMY Premium**
+# ============================================================================
+# INLINE CALLBACKS
+# ============================================================================
 
-**Premium — 499₽/мес:**
-✅ БЕЗЛИМИТ проектов
-✅ Приоритет
-✅ Расширенная команда
-✅ Автодеплой GitHub
-✅ Поддержка 24/7
-
-**Оплата:**
-`{CARD_NUMBER}`
-Комментарий: `Premium {user_id}`
-
-Скрин → активация 10 мин
-
-**Или 15 друзей:**
-{ref_link}
-Рефералов: {user['referrals']}/15"""
+@bot.callback_query_handler(func=lambda c: c.data.startswith("action_"))
+def handle_action(call):
+    action = call.data.replace("action_", "")
     
-    bot.send_message(message.chat.id, msg, parse_mode="Markdown")
-
-@bot.message_handler(commands=['stats'])
-def cmd_stats(message):
-    user_id = message.from_user.id
-    username = message.from_user.username or ""
-    user = get_user(user_id)
-    today = get_today_usage(user_id)
+    prompts = {
+        "code": "Напиши код. Опиши что нужно:",
+        "debug": "Отправь код с ошибкой — найду баг:",
+        "explain": "Отправь код — объясню как работает:",
+        "improve": "Отправь код — улучшу его:"
+    }
     
-    status = "👑 Админ" if is_admin(username) else ("⭐ Premium" if user_id in PREMIUM_USERS else "🆓 Free")
-    memory = len(conversations.get(user_id, []))
-    
-    text = f"""📊 **Статистика**
-
-Статус: {status}
-Сегодня: {today}/{FREE_DAILY_LIMIT if not is_admin(username) else '∞'}
-Всего: {user['total']}
-Проектов: {user['projects']}
-Память: {memory} сообщений
-Рефералов: {user['referrals']}
-
-**Глобально:**
-Проектов: {stats['projects']}"""
-    
-    bot.send_message(message.chat.id, text, parse_mode="Markdown")
-
-@bot.message_handler(commands=['clear'])
-def cmd_clear(message):
-    clear_memory(message.from_user.id)
-    bot.reply_to(message, "🧹 Память очищена!")
-
-@bot.message_handler(commands=['admin'])
-def cmd_admin(message):
-    username = message.from_user.username or ""
-    
-    if not is_admin(username):
-        return
-    
-    total_users = len(user_data)
-    premium = len(PREMIUM_USERS)
-    active = len([u for u, usage in user_usage.items() if date.today() in usage])
-    
-    text = f"""👑 **АДМИН-ПАНЕЛЬ**
-
-**Пользователи:**
-Всего: {total_users}
-Premium: {premium}
-Активных: {active}
-
-**Запросы:**
-Всего: {stats['total']}
-Успешно: {stats['success']}
-Ошибок: {stats['errors']}
-
-**Проекты:**
-Создано: {stats['projects']}
-
-**Топ:**"""
-    
-    top = sorted(user_data.items(), key=lambda x: x[1]['total'], reverse=True)[:5]
-    for i, (uid, data) in enumerate(top, 1):
-        text += f"\n{i}. @{data.get('username', '?')} — {data['total']} ({data.get('projects', 0)} проектов)"
-    
-    bot.send_message(message.chat.id, text, parse_mode="Markdown")
+    bot.answer_callback_query(call.id)
+    bot.send_message(call.message.chat.id, f"✏️ {prompts.get(action, 'Напиши запрос:')}")
 
 # ============================================================================
-# ОБРАБОТКА ФАЙЛОВ
+# ФАЙЛЫ
 # ============================================================================
 
 @bot.message_handler(content_types=['document'])
-def handle_document(message):
+def handle_file(message):
     user_id = message.from_user.id
     username = message.from_user.username or ""
     
     can, err = can_use(user_id, username)
     if not can:
-        bot.reply_to(message, err)
+        bot.reply_to(message, err, parse_mode="Markdown")
         return
     
     try:
-        file_info = bot.get_file(message.document.file_id)
-        downloaded_file = bot.download_file(file_info.file_path)
-        
+        file = bot.get_file(message.document.file_id)
+        content = bot.download_file(file.file_path)
         filename = message.document.file_name
-        code = extract_code_from_file(downloaded_file, filename)
         
-        # Сохраняем в кеш
+        code = extract_code_from_file(content, filename)
+        
         file_cache[user_id] = {
             "filename": filename,
             "code": code,
             "time": datetime.now()
         }
         
+        kb = types.InlineKeyboardMarkup(row_width=2)
+        kb.add(
+            types.InlineKeyboardButton("🔍 Проверить", callback_data="file_review"),
+            types.InlineKeyboardButton("🐛 Найти баги", callback_data="file_debug"),
+            types.InlineKeyboardButton("📖 Объяснить", callback_data="file_explain"),
+            types.InlineKeyboardButton("✨ Улучшить", callback_data="file_improve"),
+        )
+        
         bot.reply_to(
             message,
-            f"📁 Файл `{filename}` получен!\n\n"
-            "Что сделать?\n"
-            "• 'Проверь этот код'\n"
-            "• 'Найди баги'\n"
-            "• 'Объясни что делает'\n"
-            "• 'Улучши код'",
+            f"📁 **Файл получен:** `{filename}`\n\nЧто сделать с кодом?",
+            reply_markup=kb,
             parse_mode="Markdown"
         )
         
@@ -1221,8 +1364,37 @@ def handle_document(message):
         logger.error(f"File error: {e}")
         bot.reply_to(message, f"❌ Ошибка: {str(e)}")
 
+@bot.callback_query_handler(func=lambda c: c.data.startswith("file_"))
+def handle_file_action(call):
+    user_id = call.from_user.id
+    
+    if user_id not in file_cache:
+        bot.answer_callback_query(call.id, "❌ Файл не найден")
+        return
+    
+    action = call.data.replace("file_", "")
+    file_data = file_cache[user_id]
+    
+    prompts = {
+        "review": f"Сделай code review этого кода:\n{file_data['code']}",
+        "debug": f"Найди все баги и ошибки:\n{file_data['code']}",
+        "explain": f"Объясни подробно как работает этот код:\n{file_data['code']}",
+        "improve": f"Улучши этот код (производительность, читаемость, best practices):\n{file_data['code']}"
+    }
+    
+    bot.answer_callback_query(call.id, random.choice(THINKING_PHRASES))
+    
+    try:
+        result = SmartAI.chat(user_id, prompts[action])
+        increment_usage(user_id)
+        stats["successful"] += 1
+        send_long(call.message.chat.id, result)
+    except Exception as e:
+        stats["errors"] += 1
+        bot.send_message(call.message.chat.id, f"❌ Ошибка: {str(e)[:200]}")
+
 # ============================================================================
-# ОБРАБОТКА ТЕКСТА
+# ГЛАВНЫЙ ОБРАБОТЧИК ТЕКСТА
 # ============================================================================
 
 @bot.message_handler(func=lambda m: True, content_types=['text'])
@@ -1231,26 +1403,27 @@ def handle_text(message):
     username = message.from_user.username or ""
     text = message.text.strip()
     
-    if len(text) < 3:
+    if len(text) < 2:
         return
     
     can, err = can_use(user_id, username)
     if not can:
-        bot.reply_to(message, err)
+        bot.reply_to(message, err, parse_mode="Markdown")
         return
     
     get_user(user_id, username)
     
-    # Определяем тип
-    is_code = any(w in text.lower() for w in ['напиши', 'создай', 'код', 'функци', 'класс', 'скрипт'])
-    is_crypto = any(w in text.lower() for w in ['курс', 'цена', 'bitcoin', 'btc', 'eth', 'крипто'])
-    is_search = 'найди' in text.lower() or 'поищи' in text.lower()
-    has_file = user_id in file_cache
+    # Определяем тип запроса
+    text_lower = text.lower()
+    is_crypto = any(w in text_lower for w in ['курс', 'цена', 'btc', 'eth', 'bitcoin', 'биткоин'])
+    is_search = any(w in text_lower for w in ['найди', 'поищи', 'загугли', 'search'])
     
-    logger.info(f"@{username}: {text[:50]}...")
-    stats["total"] += 1
+    logger.info(f"💬 @{username}: {text[:50]}...")
     
-    status = bot.send_message(message.chat.id, "⚙️ Обрабатываю...")
+    # Показываем что печатаем
+    bot.send_chat_action(message.chat.id, 'typing')
+    
+    status = bot.send_message(message.chat.id, random.choice(THINKING_PHRASES))
     
     try:
         result = ""
@@ -1258,28 +1431,31 @@ def handle_text(message):
         # Крипта
         if is_crypto:
             symbol = "BTC"
-            if "eth" in text.lower():
+            if "eth" in text_lower or "эфир" in text_lower:
                 symbol = "ETH"
-            elif "sol" in text.lower():
+            elif "sol" in text_lower:
                 symbol = "SOL"
             result = get_crypto_price(symbol) + "\n\n"
         
         # Поиск
         if is_search:
-            query = text.replace("найди", "").replace("поищи", "").replace("в интернете", "").strip()
-            result += search_web(query) + "\n\n"
+            query = text_lower
+            for word in ['найди', 'поищи', 'загугли', 'в интернете', 'search']:
+                query = query.replace(word, '')
+            result += search_web(query.strip()) + "\n\n"
         
-        # Если есть загруженный файл и запрос про него
-        if has_file and any(w in text.lower() for w in ['файл', 'код', 'проверь', 'найди', 'объясни', 'улучши']):
+        # Проверяем есть ли загруженный файл
+        if user_id in file_cache:
             file_data = file_cache[user_id]
-            text = f"{text}\n\nКод из файла {file_data['filename']}:\n{file_data['code']}"
+            if any(w in text_lower for w in ['файл', 'код', 'проверь', 'этот', 'его']):
+                text = f"{text}\n\nКод из файла {file_data['filename']}:\n{file_data['code']}"
         
-        # AI ответ с памятью
-        ai_result = SmartAI.call_with_memory(user_id, text, use_thinking=is_code)
+        # AI ответ
+        ai_result = SmartAI.chat(user_id, text)
         result += ai_result
         
         increment_usage(user_id)
-        stats["success"] += 1
+        stats["successful"] += 1
         
         try:
             bot.delete_message(message.chat.id, status.message_id)
@@ -1288,12 +1464,16 @@ def handle_text(message):
         
         send_long(message.chat.id, result)
         
-        # Reminder
-        if not is_admin(username) and user_id not in PREMIUM_USERS:
+        # Напоминание о лимите
+        if not is_premium(user_id, username):
             left = FREE_DAILY_LIMIT - get_today_usage(user_id)
-            if left <= 3:
-                bot.send_message(message.chat.id, f"ℹ️ Осталось: {left}")
-        
+            if left <= 5 and left > 0:
+                bot.send_message(
+                    message.chat.id,
+                    f"ℹ️ Осталось запросов сегодня: **{left}**",
+                    parse_mode="Markdown"
+                )
+    
     except Exception as e:
         stats["errors"] += 1
         logger.error(f"Error: {e}", exc_info=True)
@@ -1303,10 +1483,16 @@ def handle_text(message):
         except:
             pass
         
-        bot.send_message(message.chat.id, f"❌ Ошибка: {str(e)[:200]}")
+        bot.send_message(
+            message.chat.id,
+            f"❌ **Ошибка:** {str(e)[:200]}\n\nПопробуй переформулировать!",
+            parse_mode="Markdown"
+        )
 
-def send_long(chat_id, text):
+def send_long(chat_id, text: str):
+    """Отправка длинных сообщений"""
     MAX = 4000
+    
     if len(text) <= MAX:
         try:
             bot.send_message(chat_id, text, parse_mode="Markdown")
@@ -1316,41 +1502,54 @@ def send_long(chat_id, text):
     
     parts = []
     current = ""
+    
     for line in text.split('\n'):
-        if len(current) + len(line) > MAX:
+        if len(current) + len(line) + 1 > MAX:
             parts.append(current)
             current = line
         else:
             current += '\n' + line if current else line
+    
     if current:
         parts.append(current)
     
-    for part in parts:
+    for i, part in enumerate(parts):
         try:
             bot.send_message(chat_id, part, parse_mode="Markdown")
         except:
             bot.send_message(chat_id, part, parse_mode=None)
-        time.sleep(0.3)
+        
+        if i < len(parts) - 1:
+            time.sleep(0.5)
 
 # ============================================================================
 # ЗАПУСК
 # ============================================================================
 
 if __name__ == "__main__":
-    logger.info("🚀 AI CODE ARMY started!")
+    logger.info(f"🚀 AI CODE ARMY v{BOT_VERSION} started!")
     logger.info(f"👑 Admins: {ADMINS}")
     logger.info(f"🤖 Agents: {len(AGENTS)}")
     logger.info(f"💰 Free limit: {FREE_DAILY_LIMIT}/day")
+    logger.info(f"🧠 Models: {GEMINI_MODELS}")
     
     # Удаляем webhook
-    bot.remove_webhook()
+    try:
+        bot.remove_webhook()
+    except:
+        pass
+    
     time.sleep(1)
     
-    # Запуск
+    # Запуск с автоперезапуском
     while True:
         try:
-            logger.info("Starting polling...")
-            bot.infinity_polling(timeout=60, long_polling_timeout=60)
+            logger.info("📡 Starting polling...")
+            bot.infinity_polling(
+                timeout=60,
+                long_polling_timeout=60,
+                allowed_updates=["message", "callback_query"]
+            )
         except Exception as e:
-            logger.error(f"Polling error: {e}")
+            logger.error(f"❌ Polling error: {e}")
             time.sleep(15)
