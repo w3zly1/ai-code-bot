@@ -1,19 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-Мультиагентный AI Telegram Bot v11.0
-Railway: TELEGRAM_TOKEN, GEMINI_API_KEY, ADMINS
-"""
-
 import os, re, io, time, asyncio, logging, traceback, zipfile
 from datetime import date, datetime
-from typing import Optional, List, Dict, Tuple
+from typing import Optional, List, Tuple
 from dataclasses import dataclass
-
 import aiosqlite
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.filters import Command
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton, FSInputFile, BufferedInputFile
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton, BufferedInputFile
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 import google.generativeai as genai
@@ -24,12 +18,10 @@ ADMINS = set(os.getenv("ADMINS", "").split(","))
 FREE_LIMIT = int(os.getenv("FREE_LIMIT", "50"))
 DB_PATH = "bot.db"
 VERSION = "11.0"
-
 MODELS = {"fast": "models/gemini-2.0-flash", "quality": "models/gemini-2.5-flash", "creative": "models/gemini-2.5-flash"}
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 log = logging.getLogger("bot")
-
 genai.configure(api_key=GEMINI_API_KEY)
 bot = Bot(token=TELEGRAM_TOKEN)
 storage = MemoryStorage()
@@ -43,7 +35,7 @@ async def init_db():
         await db.execute("CREATE TABLE IF NOT EXISTS projects (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, description TEXT, result TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
         await db.execute("CREATE TABLE IF NOT EXISTS daily_usage (user_id INTEGER, date TEXT, count INTEGER DEFAULT 0, PRIMARY KEY (user_id, date))")
         await db.commit()
-    log.info("✅ DB initialized")
+    log.info("DB ready")
 
 async def get_db():
     db = await aiosqlite.connect(DB_PATH)
@@ -99,7 +91,7 @@ async def can_use(uid: int, uname: str) -> Tuple[bool, str]:
     await db.close()
     used = usage["count"] if usage else 0
     if used >= FREE_LIMIT:
-        return False, f"⚠️ Лимит {FREE_LIMIT}/день исчерпан"
+        return False, f"⚠️ Лимит {FREE_LIMIT}/день"
     return True, ""
 
 async def save_project(uid: int, desc: str, result: str):
@@ -145,7 +137,7 @@ async def ai_call(prompt: str, system: str = "", temp: float = 0.7, max_tokens: 
             if txt and len(txt.strip()) > 10:
                 return txt.strip()
         except Exception as e:
-            log.warning(f"AI error (attempt {attempt+1}): {e}")
+            log.warning(f"AI error {attempt+1}: {e}")
             if attempt == 0:
                 model_name = MODELS["fast"]
                 await asyncio.sleep(1)
@@ -173,42 +165,42 @@ class BaseAgent:
             output = await ai_call(prompt, self.system, temp=temp_map.get(mode, 0.7), model=mode)
             return AgentResult(name=self.name, output=output, success=True)
         except Exception as e:
-            log.error(f"{self.emoji} {self.name} error: {e}")
             return AgentResult(name=self.name, output="", success=False, error=str(e))
 
 class AnalystAgent(BaseAgent):
     def __init__(self):
-        super().__init__("Analyst", "🔍", "Ты аналитик. Разбираешь запрос и создаёшь ТЗ.\n\nФормат:\nЗАДАЧА: [что делать]\nТРЕБОВАНИЯ: [список]\nОГРАНИЧЕНИЯ: [что учесть]\n\nМаксимум 200 слов.")
+        super().__init__("Analyst", "🔍", "Ты аналитик. Разбираешь запрос, создаёшь ТЗ.\n\nФормат:\nЗАДАЧА: [что делать]\nТРЕБОВАНИЯ: [список]\n\nМаксимум 200 слов.")
 
 class CoderAgent(BaseAgent):
     def __init__(self):
-        super().__init__("Coder", "💻", "Ты elite-программист.\n\nПравила:\n✅ Код ПОЛНЫЙ, без TODO\n✅ Type hints, обработка ошибок\n✅ Код в ```блоках: ```filename.ext\n✅ Сразу к делу\n✅ Формат для Telegram: абзацы 2-3 строки, эмодзи для навигации\n\nЕсли получил ТЗ — следуй ему.\nЕсли замечания ревьюера — исправь всё.")
+        super().__init__("Coder", "💻", "Ты elite-программист.\n\nПравила:\n- Код ПОЛНЫЙ, без TODO\n- Type hints, обработка ошибок\n- Код в ```блоках\n- Сразу к делу, без воды\n- Формат для Telegram: абзацы 2-3 строки, эмодзи\n\nЕсли есть ТЗ — следуй ему. Если замечания — исправь.")
 
 class ReviewerAgent(BaseAgent):
     def __init__(self):
-        super().__init__("Reviewer", "🐛", "Ты senior code reviewer.\n\nПроверяешь:\n- Баги\n- Безопасность\n- Производительность\n\nФормат:\nПРОБЛЕМЫ: [🔴🟡🟢 список]\nИСПРАВЛЕНИЯ: [код]\nОЦЕНКА: [1-10]\n\nЕсли < 7 — дай исправленный код.")
+        super().__init__("Reviewer", "🐛", "Ты code reviewer.\n\nПроверяешь: баги, безопасность, производительность.\n\nФормат:\nПРОБЛЕМЫ: [список]\nИСПРАВЛЕНИЯ: [код]\nОЦЕНКА: [1-10]\n\nЕсли < 7 — дай исправленный код.")
 
 class DocumenterAgent(BaseAgent):
     def __init__(self):
-        super().__init__("Documenter", "📝", "Ты техписатель.\n\nСоздай README:\n# [Название]\n\n## Что умеет\n- пункты\n\n## Установка\n```bash\nкоманды\n```\n\n## Запуск\n```bash\nкоманды\n```\n\nКратко, без воды.")
+        super().__init__("Documenter", "📝", "Ты техписатель. Создай README:\n# Название\n## Что умеет\n## Установка\n## Запуск\n\nКратко.")
 
 analyst = AnalystAgent()
 coder = CoderAgent()
 reviewer = ReviewerAgent()
 documenter = DocumenterAgent()
-class Router:
+
+class TaskRouter:
     @staticmethod
     def detect(text: str) -> str:
         t = text.lower()
-        if any(x in t for x in ["создай проект", "сделай проект", "полный проект", "приложение с нуля", "сайт с нуля"]):
+        if any(x in t for x in ["создай проект", "сделай проект", "полный проект", "с нуля"]):
             return "project"
-        if any(x in t for x in ["ошибка", "error", "traceback", "не работает", "баг", "bug", "исправь код"]):
+        if any(x in t for x in ["ошибка", "error", "traceback", "не работает", "баг", "bug", "исправь"]):
             return "debug"
-        if any(x in t for x in ["объясни", "как работает", "почему", "напиши код", "реализуй", "функцию для"]) or len(text) > 200:
+        if any(x in t for x in ["объясни", "как работает", "почему", "напиши код", "реализуй", "функцию"]) or len(text) > 200:
             return "question"
         return "simple"
 
-router_agent = Router()
+task_router = TaskRouter()
 
 class Pipeline:
     @staticmethod
@@ -217,26 +209,23 @@ class Pipeline:
             await msg.edit_text(text)
         except:
             pass
-    
+
     @staticmethod
     async def process(user_input: str, route: str, ctx: dict, mode: str, progress: Message) -> str:
         context = {"history": ctx.get("history", ""), "previous": ""}
-        
         if route == "simple":
             await Pipeline.update(progress, "🧠 Думаю...\n\n💻 Coder: Работаю... ⏳")
             r = await coder.run(user_input, context, mode)
-            return r.output if r.success else f"❌ Ошибка: {r.error}"
-        
+            return r.output if r.success else f"❌ {r.error}"
         if route == "question":
             await Pipeline.update(progress, "🧠 Работаю...\n\n🔍 Analyst: Анализирую... ⏳\n💻 Coder: Ожидает")
             analysis = await analyst.run(user_input, context, mode)
             if not analysis.success:
-                return f"❌ Ошибка: {analysis.error}"
+                return f"❌ {analysis.error}"
             await Pipeline.update(progress, "🧠 Работаю...\n\n🔍 Analyst: Готово ✅\n💻 Coder: Пишу... ⏳")
             context["previous"] = analysis.output
             code = await coder.run(user_input, context, mode)
-            return code.output if code.success else f"❌ Ошибка: {code.error}"
-        
+            return code.output if code.success else f"❌ {code.error}"
         if route == "debug":
             await Pipeline.update(progress, "🧠 Работаю...\n\n🔍 Analyst: Анализирую... ⏳\n🐛 Reviewer: Ожидает\n💻 Coder: Ожидает")
             analysis = await analyst.run(user_input, context, mode)
@@ -246,35 +235,33 @@ class Pipeline:
             await Pipeline.update(progress, "🧠 Работаю...\n\n🔍 Analyst: Готово ✅\n🐛 Reviewer: Готово ✅\n💻 Coder: Исправляю... ⏳")
             context["previous"] = f"{analysis.output if analysis.success else ''}\n\n{review.output if review.success else ''}"
             code = await coder.run(user_input, context, mode)
-            return code.output if code.success else f"❌ Ошибка: {code.error}"
-        
+            return code.output if code.success else f"❌ {code.error}"
         if route == "project":
-            await Pipeline.update(progress, "🚀 Создаю проект...\n\n🔍 Analyst: ТЗ... ⏳\n💻 Coder: Ожидает\n🐛 Reviewer: Ожидает\n📝 Documenter: Ожидает")
+            await Pipeline.update(progress, "🚀 Создаю проект...\n\n🔍 Analyst: ТЗ... ⏳\n💻 Coder: Ожидает\n🐛 Reviewer: Ожидает\n📝 Docs: Ожидает")
             analysis = await analyst.run(user_input, context, mode)
             if not analysis.success:
-                return f"❌ Ошибка: {analysis.error}"
-            await Pipeline.update(progress, "🚀 Создаю проект...\n\n🔍 Analyst: Готово ✅\n💻 Coder: Пишу код... ⏳\n🐛 Reviewer: Ожидает\n📝 Documenter: Ожидает")
+                return f"❌ {analysis.error}"
+            await Pipeline.update(progress, "🚀 Создаю проект...\n\n🔍 Analyst: Готово ✅\n💻 Coder: Пишу... ⏳\n🐛 Reviewer: Ожидает\n📝 Docs: Ожидает")
             context["previous"] = analysis.output
             code = await coder.run(user_input, context, mode)
             if not code.success:
-                return f"❌ Ошибка: {code.error}"
-            await Pipeline.update(progress, "🚀 Создаю проект...\n\n🔍 Analyst: Готово ✅\n💻 Coder: Готово ✅\n🐛 Reviewer: Проверяю... ⏳\n📝 Documenter: Ожидает")
+                return f"❌ {code.error}"
+            await Pipeline.update(progress, "🚀 Создаю проект...\n\n🔍 Analyst: Готово ✅\n💻 Coder: Готово ✅\n🐛 Reviewer: Проверяю... ⏳\n📝 Docs: Ожидает")
             context["previous"] = code.output
             review = await reviewer.run("Проверь код", context, mode)
             final_code = code.output
             if review.success and mode != "fast":
                 score = re.search(r"ОЦЕНКА:\s*(\d+)", review.output)
                 if score and int(score.group(1)) < 7:
-                    await Pipeline.update(progress, "🚀 Создаю проект...\n\n🔍 Analyst: Готово ✅\n💻 Coder: Улучшаю... ⏳\n🐛 Reviewer: Готово ✅\n📝 Documenter: Ожидает")
+                    await Pipeline.update(progress, "🚀 Создаю проект...\n\n🔍 Analyst: Готово ✅\n💻 Coder: Улучшаю... ⏳\n🐛 Reviewer: Готово ✅\n📝 Docs: Ожидает")
                     context["previous"] = f"{code.output}\n\nЗАМЕЧАНИЯ:\n{review.output}"
                     improved = await coder.run("Исправь замечания", context, mode)
                     if improved.success:
                         final_code = improved.output
-            await Pipeline.update(progress, "🚀 Создаю проект...\n\n🔍 Analyst: Готово ✅\n💻 Coder: Готово ✅\n🐛 Reviewer: Готово ✅\n📝 Documenter: README... ⏳")
+            await Pipeline.update(progress, "🚀 Создаю проект...\n\n🔍 Analyst: Готово ✅\n💻 Coder: Готово ✅\n🐛 Reviewer: Готово ✅\n📝 Docs: README... ⏳")
             context["previous"] = final_code
             docs = await documenter.run("Создай README", context, mode)
             return f"{docs.output if docs.success else ''}\n\n---\n\n{final_code}"
-        
         return "❌ Неизвестный маршрут"
 
 def extract_files(text: str) -> List[Tuple[str, str]]:
@@ -291,7 +278,7 @@ def extract_files(text: str) -> List[Tuple[str, str]]:
         elif "/" in marker:
             filename = marker.split("/")[-1]
         else:
-            ext_map = {"python": "py", "py": "py", "javascript": "js", "js": "js", "html": "html", "css": "css", "dockerfile": "Dockerfile", "bash": "sh"}
+            ext_map = {"python": "py", "py": "py", "javascript": "js", "js": "js", "html": "html", "css": "css", "bash": "sh", "dockerfile": "Dockerfile"}
             ext = ext_map.get(marker.lower(), "txt")
             filename = f"main.{ext}" if ext == "py" else f"index.{ext}" if ext == "html" else f"app.{ext}"
         if filename in counters:
@@ -309,7 +296,7 @@ def create_zip(text: str) -> bytes:
         files = extract_files(text)
         for fn, code in files:
             z.writestr(fn, code)
-        z.writestr("_INFO.md", f"# AI Project\n\nДата: {datetime.now()}\nФайлов: {len(files)}\n\n" + "\n".join(f"- {f}" for f, _ in files))
+        z.writestr("INFO.md", f"# AI Project\nДата: {datetime.now()}\nФайлов: {len(files)}")
     buf.seek(0)
     return buf.getvalue()
 
@@ -335,7 +322,7 @@ async def send_long(cid: int, text: str, markup=None):
         await asyncio.sleep(0.2)
 
 def main_kb():
-    return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="💬 Вопрос"), KeyboardButton(text="🚀 Проект")], [KeyboardButton(text="⚙️ Режим"), KeyboardButton(text="📊 Статистика")], [KeyboardButton(text="🔄 Новый диалог"), KeyboardButton(text="❓ Помощь")]], resize_keyboard=True)
+    return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="💬 Вопрос"), KeyboardButton(text="🚀 Проект")], [KeyboardButton(text="⚙️ Режим"), KeyboardButton(text="📊 Статистика")], [KeyboardButton(text="🔄 Сброс"), KeyboardButton(text="❓ Помощь")]], resize_keyboard=True)
 
 def mode_kb(current: str):
     return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"{'✅' if current=='fast' else '⚡'} Быстрый", callback_data="mode_fast"), InlineKeyboardButton(text=f"{'✅' if current=='quality' else '🎯'} Качество", callback_data="mode_quality")], [InlineKeyboardButton(text=f"{'✅' if current=='creative' else '🎨'} Креатив", callback_data="mode_creative")]])
@@ -345,14 +332,15 @@ def project_kb():
 
 def file_kb():
     return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔍 Проверить", callback_data="file_check"), InlineKeyboardButton(text="🐛 Баги", callback_data="file_bugs")], [InlineKeyboardButton(text="📖 Объяснить", callback_data="file_explain"), InlineKeyboardButton(text="✨ Улучшить", callback_data="file_improve")]])
-    @router.message(Command("start"))
+
+@router.message(Command("start"))
 async def cmd_start(msg: Message):
     await get_user(msg.from_user.id, msg.from_user.username or "")
-    await msg.answer(f"🧠 **AI Assistant v{VERSION}**\n\nМультиагентная система с 5 AI.\n\n**Режимы:**\n⚡ Быстрый — 1 агент\n🎯 Качество — до 4 агентов\n🎨 Креатив — max температура\n\n**Что умею:**\n• Отвечать на вопросы\n• Писать код\n• Создавать проекты\n• Находить баги\n• Объяснять\n\nПросто напиши что нужно 🚀", parse_mode="Markdown", reply_markup=main_kb())
+    await msg.answer(f"🧠 **AI Assistant v{VERSION}**\n\nМультиагентная система.\n\n**Режимы:**\n⚡ Быстрый — 1 агент\n🎯 Качество — до 4 агентов\n🎨 Креатив — max температура\n\n**Что умею:**\n• Отвечать на вопросы\n• Писать код\n• Создавать проекты\n• Находить баги\n\nПросто напиши 🚀", parse_mode="Markdown", reply_markup=main_kb())
 
 @router.message(Command("help"))
 async def cmd_help(msg: Message):
-    await msg.answer("❓ **Помощь**\n\n**Команды:**\n/start\n/help\n/new — новый диалог\n/mode — режим\n/stats — статистика\n\n**Примеры:**\n• _Объясни рекурсию_\n• _Напиши сортировку на Python_\n• _Создай проект: сайт для кофейни_\n• _Исправь ошибку: [код]_", parse_mode="Markdown")
+    await msg.answer("❓ **Помощь**\n\n/start\n/help\n/new — новый диалог\n/mode — режим\n/stats — статистика\n\n**Примеры:**\n• _Объясни рекурсию_\n• _Напиши сортировку_\n• _Создай проект: сайт кофейни_", parse_mode="Markdown")
 
 @router.message(Command("new"))
 async def cmd_new(msg: Message):
@@ -365,18 +353,18 @@ async def cmd_new(msg: Message):
 @router.message(Command("mode"))
 async def cmd_mode(msg: Message):
     u = await get_user(msg.from_user.id)
-    await msg.answer(f"⚙️ **Режим**\n\nТекущий: {u.get('mode', 'quality')}\n\n⚡ Быстрый — 1 агент, ~5-10 сек\n🎯 Качество — 2-4 агента, ~20-40 сек\n🎨 Креатив — max свобода", parse_mode="Markdown", reply_markup=mode_kb(u.get("mode", "quality")))
+    await msg.answer(f"⚙️ **Режим:** {u.get('mode', 'quality')}\n\n⚡ Быстрый — 1 агент\n🎯 Качество — 2-4 агента\n🎨 Креатив — max свобода", parse_mode="Markdown", reply_markup=mode_kb(u.get("mode", "quality")))
 
 @router.message(Command("stats"))
 async def cmd_stats(msg: Message):
-    u = await get_user(msg.from_user.id, msg.from_user.username or "")
+    u = await get_user(msg.from_user.id)
     db = await get_db()
     today = date.today().isoformat()
     usage = await db.execute("SELECT count FROM daily_usage WHERE user_id = ? AND date = ?", (msg.from_user.id, today))
     usage = await usage.fetchone()
     await db.close()
     used = usage["count"] if usage else 0
-    await msg.answer(f"📊 **Статистика**\n\nВсего: {u['total_requests']}\nПроектов: {u['total_projects']}\nСегодня: {used}/{FREE_LIMIT}\nРежим: {u.get('mode', 'quality')}", parse_mode="Markdown")
+    await msg.answer(f"📊 **Статистика**\n\nВсего: {u['total_requests']}\nПроектов: {u['total_projects']}\nСегодня: {used}/{FREE_LIMIT}", parse_mode="Markdown")
 
 @router.message(F.text == "💬 Вопрос")
 async def btn_question(msg: Message):
@@ -384,7 +372,7 @@ async def btn_question(msg: Message):
 
 @router.message(F.text == "🚀 Проект")
 async def btn_project(msg: Message, state: FSMContext):
-    await msg.answer("🚀 **Создание проекта**\n\nОпиши что нужно:\n\n_Пример: Сайт для пиццерии с каталогом и корзиной_", parse_mode="Markdown")
+    await msg.answer("🚀 **Создание проекта**\n\nОпиши что нужно:\n\n_Пример: Сайт для пиццерии с каталогом_", parse_mode="Markdown")
     await state.set_state("project_desc")
 
 @router.message(F.text == "⚙️ Режим")
@@ -395,8 +383,8 @@ async def btn_mode(msg: Message):
 async def btn_stats(msg: Message):
     await cmd_stats(msg)
 
-@router.message(F.text == "🔄 Новый диалог")
-async def btn_new(msg: Message):
+@router.message(F.text == "🔄 Сброс")
+async def btn_reset(msg: Message):
     await cmd_new(msg)
 
 @router.message(F.text == "❓ Помощь")
@@ -452,7 +440,7 @@ async def cb_file(call: CallbackQuery, state: FSMContext):
     await call.answer("⏳ Анализирую...")
     u = await get_user(call.from_user.id)
     mode = u.get("mode", "quality")
-    prompts = {"check": "Проверь код. Найди проблемы.", "bugs": "Найди баги. Дай исправленный код.", "explain": "Объясни что делает код.", "improve": "Улучши код. Дай полный улучшенный."}
+    prompts = {"check": "Проверь код", "bugs": "Найди баги, дай исправленный код", "explain": "Объясни код", "improve": "Улучши код"}
     task = f"{prompts[action]}\n\n```\n{content[:20000]}\n```"
     progress = await call.message.answer("🔄 Анализирую...")
     try:
@@ -476,7 +464,7 @@ async def on_doc(msg: Message, state: FSMContext):
         except:
             content = data.read().decode("latin-1", errors="ignore")
         if len(content) > 50000:
-            content = content[:50000] + "\n\n... (обрезано)"
+            content = content[:50000]
         await state.update_data(file_content=content)
         await msg.answer(f"📁 Файл `{msg.document.file_name}` получен\n\nЧто сделать?", parse_mode="Markdown", reply_markup=file_kb())
     except Exception as e:
@@ -495,11 +483,11 @@ async def on_text(msg: Message, state: FSMContext):
         if not p:
             await msg.answer("❌ Нет проекта")
             return
-        user_input = f"Текущий:\n{p['result'][:10000]}\n\n---\n\nИзменения:\n{msg.text}"
+        user_input = f"Текущий:\n{p['result'][:10000]}\n\nИзменения:\n{msg.text}"
         route = "project"
     else:
         user_input = msg.text
-        route = router_agent.detect(user_input)
+        route = task_router.detect(user_input)
     ok, err = await can_use(msg.from_user.id, msg.from_user.username or "")
     if not ok:
         await msg.answer(err)
@@ -522,13 +510,13 @@ async def on_text(msg: Message, state: FSMContext):
     except Exception as e:
         log.error(traceback.format_exc())
         await progress.delete()
-        await msg.answer(f"❌ {e}\n\nПопробуй /mode fast")
+        await msg.answer(f"❌ {e}")
 
 async def main():
     log.info(f"🚀 v{VERSION}")
     await init_db()
     dp.include_router(router)
-    log.info("✅ Запущен")
+    log.info("✅ Started")
     await dp.start_polling(bot, skip_updates=True)
 
 if __name__ == "__main__":
